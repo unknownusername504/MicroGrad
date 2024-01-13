@@ -1,0 +1,1 @@
+Simple library that implements machine learning algorithms with quatized nets and data. The plan is to start with only uint8s and implement the basics.
