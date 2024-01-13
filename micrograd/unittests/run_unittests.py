@@ -1,10 +1,11 @@
 import unittest
 import os
 
+
 def run_op_unittests():
     # Create the test suite
     suite = unittest.TestSuite()
-    
+
     # Join the current working directory with the unittests folder
     unittests_dir = os.path.join(os.getcwd(), "micrograd", "unittests")
     print(f"Running unittests from {unittests_dir}")
@@ -13,7 +14,7 @@ def run_op_unittests():
     test_loader = unittest.TestLoader()
     test_loader.testMethodPrefix = "op_unittest_"
     tests = test_loader.discover(unittests_dir, pattern="op_unittests.py")
-    
+
     # Print the tests
     print("Found the following tests:")
     # Print the tests
@@ -34,6 +35,7 @@ def run_op_unittests():
     # Run the tests
     runner = unittest.TextTestRunner()
     runner.run(suite)
+
 
 if __name__ == "__main__":
     print("Running all unittests...")

@@ -3,6 +3,7 @@ import numpy as np
 from micrograd.tensors.tensor_u8 import TensorU8
 from micrograd.functions.wave_process import WaveRunner
 
+
 # Unit tests of operations
 class TestOps(unittest.TestCase):
     def op_unittest_add(self):
@@ -15,17 +16,17 @@ class TestOps(unittest.TestCase):
             z = x + y
             # Print the result
             print(z.value)
-    
+
     @unittest.skip("Not implemented")
     def op_unittest_sub(self):
         # Test subtraction
         pass
-    
+
     @unittest.skip("Not implemented")
     def op_unittest_dot(self):
         # Test dot product
         pass
-    
+
     @unittest.skip("Not implemented")
     def op_unittest_mul(self):
         # Test multiplication
