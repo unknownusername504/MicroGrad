@@ -92,6 +92,7 @@ class Add(Function):
 
     @staticmethod
     def reduce(results: List[Function], output: Tensor):
+        print("\nreduce results:", results)
         # We want to reduce the results into one result
         # We will assign the chunks to the output tensor
         # Get the number of chunks
@@ -106,7 +107,7 @@ class Add(Function):
             # Get the size of the chunk_output
             size = np.prod(shape)
             # Assign the chunk_output to the output tensor
-            output.value[output_index : output_index + size] = chunk_output.value
+            output[output_index : output_index + size] = chunk_output.value
             # Increment the output index
             output_index += size
         print("output:", output)

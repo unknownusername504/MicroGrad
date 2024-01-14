@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple, Union
 import numpy as np
 
 
@@ -16,6 +16,103 @@ class Tensor:
         self.grad_fn = None
         self.children = {}
         self.parents = {}
+
+    # Length of the tensor
+    def __len__(self):
+        return len(self.value)
+
+    # Casting the tensor dytpe
+    def astype(self, dtype):
+        self.value = self.value.astype(dtype)
+        self.dtype = dtype
+        return self
+
+    # Slice the tensor
+    def __getitem__(self, key: Union[int, slice]) -> "Tensor":
+        # If the key is an integer
+        if type(key) is int:
+            # Make into a slice
+            key = slice(key, key + 1)
+        # Make sure the key range is valid
+        if key.start < 0 or key.stop > len(self.value):
+            raise Exception("Invalid key range")
+        tensor_type = type(self)
+        # Get the value
+        value_slice = self.value[key]
+        # Length of the slice
+        length = len(value_slice)
+        # Shape is now flattened
+        shape_slice = (length,)
+        # Create the tensor
+        tensor_slice = tensor_type(shape=shape_slice, value=value_slice)
+        # Return the tensor
+        return tensor_slice
+
+    # Set slice of the tensor
+    def __setitem__(
+        self,
+        key: Union[int, slice],
+        value: Union[List, np.ndarray, "Tensor", np.number, int, float],
+    ):
+        # If the key is an integer
+        if type(key) is int:
+            # Make into a slice
+            key = slice(key, key + 1)
+        # Make sure the key range is valid
+        if key.start < 0 or key.stop > len(self.value):
+            raise Exception("Invalid key range")
+        # Flatten the incoming tensor value and ensure it is a numpy array of lesser or equal size
+        if type(value) is not np.ndarray:
+            value = np.array(value)
+        value = value.flatten()
+        # Ensure that the value is compatible with the tensor dtype with an attempt to cast
+        try:
+            value = value.astype(self.dtype)
+        except:
+            raise Exception("Incompatible value dtype")
+        # Ensure the value is the same size as the key range
+        if len(value) != (key.stop - key.start):
+            raise Exception("Invalid value size")
+        # Set the value
+        self.value[key] = value
+
+    # Print string representation of the tensor
+    def __str__(self):
+        return f"Tensor(shape={self.shape}, dtype={self.dtype}, value={self.value})"
+
+    # Print representation of the tensor
+    def __repr__(self):
+        return self.__str__()
+
+    # Get the shape of the tensor
+    def get_shape(self):
+        return self.shape
+
+    # Get the dtype of the tensor
+    def get_dtype(self):
+        return self.dtype
+
+    # Get the value of the tensor
+    def get_value(self):
+        return self.value
+
+    # Flatten the tensor
+    def flatten(self):
+        self.value = self.value.flatten()
+        self.shape = (len(self.value),)
+        return self
+
+    # Reshape the tensor
+    def reshape(self, shape):
+        self.value = self.value.reshape(shape)
+        self.shape = shape
+        return self
+
+    # Transpose the tensor
+    def transpose(self, axes=None):
+        self.value = self.value.transpose(axes)
+        self.shape = self.value.shape
+        return self
 
     @staticmethod
     def can_broadcast(shape1, shape2):
@@ -153,27 +250,3 @@ class Tensor:
         y_out = y.reshape(output_shape)
         # Return the output tensors
         return x_out, y_out
-
-    # Slice the tensor
-    def __getitem__(self, key):
-        tensor_type = type(self)
-        # Get the value
-        value_slice = self.value[key]
-        # Create the tensor
-        tensor = tensor_type(shape=self.shape, value=value_slice)
-        # Return the tensor
-        return tensor
-
-    # Print string representation of the tensor
-    def __str__(self):
-        return f"Tensor(shape={self.shape}, dtype={self.dtype}, value={self.value})"
-
-    # Print representation of the tensor
-    def __repr__(self):
-        return self.__str__()
-
-    # Reshape the tensor
-    def reshape(self, shape):
-        self.value = self.value.reshape(shape)
-        self.shape = shape
-        return self
