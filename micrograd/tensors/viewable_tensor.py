@@ -9,6 +9,7 @@ from micrograd.tensors.tensor import Tensor
 
 class ViewableTensor(Tensor):
     def __init__(self, tensor: Tensor, slices: Optional[List[slice]] = None):
+        self.tensor_type = type(tensor)
         self.viewable_shape = tensor.shape
         # Get the flattened tensor
         tensor.flatten()
@@ -25,9 +26,10 @@ class ViewableTensor(Tensor):
             self.slices = [slice(0, len(self), 1)]
         else:
             # Check that the slices are valid
-            for i, s in enumerate(slices):
+            for i, this_slice in enumerate(slices):
+                assert isinstance(this_slice, slice)
                 # Populate none values in the slices and sanitize the slices
-                slices[i] = self.sanitize_slice(s)
+                slices[i] = self.sanitize_slice(this_slice)
             self.slices = slices
             self.combine_slices()
 
@@ -36,40 +38,37 @@ class ViewableTensor(Tensor):
     # Called in the constructor and when slicing views
     def sanitize_slice(self, this_slice: slice) -> slice:
         try:
-            assert isinstance(this_slice, slice)
+            start = 0 if this_slice.start is None else this_slice.start
+            stop = len(self) if this_slice.stop is None else this_slice.stop
+            step = 1 if this_slice.step is None else this_slice.step
+            # If the mod of stop - start and step is not 0 then set the stop to the next step
+            mod_stop_start = (stop - start) % step
+            if mod_stop_start != 0:
+                remainder = step - mod_stop_start
+                stop += remainder
+            # If the stop is equal to the start then set the step to 1 and the stop to the next step
+            if stop == start:
+                step = 1
+                stop = start + step
+            # If the abs of the step is not 1 and the slice would only have 1 element then set the step to 1
+            if abs(step) != 1 and (stop - step) == start:
+                step = 1
             # Assert that the range of the slice is valid
-            assert (this_slice.start >= 0) and (this_slice.start <= len(self))
-            assert (this_slice.stop <= len(self)) and (this_slice.stop >= 0)
+            assert (start >= 0) and (start <= len(self))
+            assert (stop <= len(self) + step) and (stop >= 0)
             # Assert that abs(step) is not greater than the length of the slice
-            assert abs(this_slice.step) <= (this_slice.stop - this_slice.start) and (
-                this_slice.step != 0
-            )
+            assert abs(step) <= (stop - start) and (step != 0)
             # Assert that the slice is not empty
-            assert (this_slice.start <= this_slice.stop) or (this_slice.step < 0)
+            assert (start <= stop) or (step < 0)
         except AssertionError:
             raise ValueError("Invalid slice")
-        start = 0 if this_slice.start is None else this_slice.start
-        stop = len(self) if this_slice.stop is None else this_slice.stop
-        step = 1 if this_slice.step is None else this_slice.step
-        # If the mod of stop - start and step is not 0 then set the stop to the next step
-        mod_stop_start = (stop - start) % step
-        if mod_stop_start != 0:
-            remainder = step - mod_stop_start
-            stop += remainder
-        # If the stop is equal to the start then set the step to 1 and the stop to the next step
-        if stop == start:
-            step = 1
-            stop = start + step
-        # If the abs of the step is not 1 and the slice would only have 1 element then set the step to 1
-        if abs(step) != 1 and (stop - step) == start:
-            step = 1
         return slice(start, stop, step)
 
     # Set the slices of the viewable tensor
     def set_slices(self, slices: List[slice]):
-        for i, slice in enumerate(slices):
+        for i, this_slice in enumerate(slices):
             # Populate none values in the slices and sanitize the slices
-            slices[i] = self.sanitize_slice(slice)
+            slices[i] = self.sanitize_slice(this_slice)
         self.slices = slices
         self.combine_slices()
 
@@ -82,25 +81,73 @@ class ViewableTensor(Tensor):
         # If the key is an integer
         if type(key) is int:
             # Make into a slice
-            key = slice(key, key + 1)
+            key = slice(key, key + 1, 1)
         # Make sure the key range is valid
-        if key.start < 0 or key.stop > len(self):
-            raise Exception("Invalid key range")
-        tensor_type = type(self)
+        self.sanitize_slice(key)
         # Get the value
-        value_slice = self.value[key]
+        real_index = 0
+        contiguous_array = np.zeros(len(self), dtype=self.dtype)
+        for this_slice in self.slices:
+            # Get the start, stop, and step
+            start = this_slice.start
+            stop = this_slice.stop
+            step = this_slice.step
+            for slice_index in range((stop - start) // step):
+                slice_index_real = (slice_index * step) + start
+                # Set the slice
+                contiguous_array[real_index] = self.value[slice_index_real]
+                # Increment the real_index
+                real_index += 1
+        # Get the value slice
+        value_slice = contiguous_array[key]
         # Length of the slice
         length = len(value_slice)
         # Shape is now flattened
         shape_slice = (length,)
         # Create the tensor
-        tensor_slice = tensor_type(shape=shape_slice, value=value_slice)
+        tensor_slice = self.tensor_type(
+            shape=shape_slice,
+            dtype=self.dtype,
+            value=value_slice,
+            requires_grad=self.requires_grad,
+        )
         # Return the tensor
         return tensor_slice
 
     def get_contiguous(self) -> "Tensor":
         # Return the contiguous tensor
         return self[0 : len(self)]
+
+    # Redefine the setitem method to be symbolic
+    def __setitem__(
+        self,
+        key: Union[int, slice],
+        value: Union[List, np.ndarray, "Tensor", np.number, int, float],
+    ):
+        # If the key is an integer
+        if type(key) is int:
+            # Make into a slice
+            key = slice(key, key + 1, 1)
+        # Make sure the key range is valid
+        self.sanitize_slice(key)
+        # Get the value
+        real_index = 0
+        contiguous_array = np.zeros(len(self), dtype=self.dtype)
+        for this_slice in self.slices:
+            # Get the start, stop, and step
+            start = this_slice.start
+            stop = this_slice.stop
+            step = this_slice.step
+            for slice_index in range((stop - start) // step):
+                slice_index_real = (slice_index * step) + start
+                # Set the slice
+                contiguous_array[real_index] = self.value[slice_index_real]
+                # Increment the real_index
+                real_index += 1
+        # Set the value
+        contiguous_array[key] = value
+        # Set the value
+        self.value = contiguous_array
 
     # Redefine the reshape method to be symbolic
     def reshape(self, shape):
@@ -154,24 +201,24 @@ class ViewableTensor(Tensor):
         self.slices = new_slices
 
     # Redefine the transpose method to work with viewable tensors
-    def transpose(self, axes=None):
+    def transpose(self, axes: Optional[List[int]] = None):
         # If the axes are not specified then set it to the reverse of first axis
         if axes is None:
-            axes = tuple(reversed(range(len(self.viewable_shape))))
+            axes = list(range(len(self.viewable_shape) - 1, -1, -1))
         # Perform the transpose by modifying the slices
         # This needs to take into account the original shape of the viewable tensor and
         # the new shape of the viewable tensor to get the correct slices
         # Slices can also be any slice of the underlying tensor in any order and with overlaps or gaps
         # Slices can also have steps
         # Create a matrix of the indices to be used for the transpose
-        matrix_post = np.indices(self.shape)
+        matrix_post = np.zeros(len(self), dtype=np.int32)
         # Populate the matrix_pre with the slices
         matrix_index = 0
-        for slice in self.slices:
+        for this_slice in self.slices:
             # Get the start, stop, and step
-            start = slice.start
-            stop = slice.stop
-            step = slice.step
+            start = this_slice.start
+            stop = this_slice.stop
+            step = this_slice.step
             for slice_index in range((stop - start) // step):
                 slice_index_real = (slice_index * step) + start
                 # Set the slice
@@ -193,7 +240,7 @@ class ViewableTensor(Tensor):
         # See if the slices can be combined
         self.combine_slices()
         # Set the viewable shape by transposing the axes
-        self.viewable_shape = self.viewable_shape[axes]
+        self.viewable_shape = tuple(self.viewable_shape[i] for i in axes)
 
 
 # Unit tests for ViewableTensor
@@ -242,6 +289,53 @@ class TestViewableTensor(unittest.TestCase):
             self.fail("Exception raised while testing reshape method: " + str(e))
 
         try:
+            # Test the getitem method
+            self.assertEqual(viewable_tensor[0].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[1].value.tolist(), [2])
+            self.assertEqual(viewable_tensor[2].value.tolist(), [3])
+            self.assertEqual(viewable_tensor[3].value.tolist(), [4])
+            self.assertEqual(viewable_tensor[0:2].value.tolist(), [1, 2])
+            self.assertEqual(viewable_tensor[2:4].value.tolist(), [3, 4])
+            self.assertEqual(viewable_tensor[0:4:2].value.tolist(), [1, 3])
+            self.assertEqual(viewable_tensor[1:4:2].value.tolist(), [2, 4])
+            self.assertEqual(viewable_tensor[0:4:3].value.tolist(), [1, 4])
+            self.assertEqual(viewable_tensor[0:4:4].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[0:4:5].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[0:5:1].value.tolist(), [1, 2, 3, 4])
+        except Exception as e:
+            self.fail("Exception raised while testing getitem method: " + str(e))
+
+        try:
+            # Test the setitem method
+            viewable_tensor[0] = 5
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 2, 3, 4])
+            viewable_tensor[1] = 6
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 6, 3, 4])
+            viewable_tensor[2] = 7
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 6, 7, 4])
+            viewable_tensor[3] = 8
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 6, 7, 8])
+            viewable_tensor[0:2] = [1, 2]
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 7, 8])
+            viewable_tensor[2:4] = [3, 4]
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
+            viewable_tensor[0:4:2] = [5, 6]
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 2, 6, 4])
+            viewable_tensor[1:4:2] = [7, 8]
+            self.assertEqual(viewable_tensor.value.tolist(), [5, 7, 6, 8])
+            viewable_tensor[0:4:3] = [1, 2]
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 7, 6, 2])
+            viewable_tensor[0:4:4] = [3]
+            self.assertEqual(viewable_tensor.value.tolist(), [3, 7, 6, 2])
+            viewable_tensor[0] = 1
+            viewable_tensor[1] = 2
+            viewable_tensor[2] = 3
+            viewable_tensor[3] = 4
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
+        except Exception as e:
+            self.fail("Exception raised while testing setitem method: " + str(e))
+
+        try:
             # Test the transpose method
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
@@ -260,23 +354,6 @@ class TestViewableTensor(unittest.TestCase):
             )
         except Exception as e:
             self.fail("Exception raised while testing transpose method: " + str(e))
-
-        try:
-            # Test the getitem method
-            self.assertEqual(viewable_tensor[0].value.tolist(), [1])
-            self.assertEqual(viewable_tensor[1].value.tolist(), [2])
-            self.assertEqual(viewable_tensor[2].value.tolist(), [3])
-            self.assertEqual(viewable_tensor[3].value.tolist(), [4])
-            self.assertEqual(viewable_tensor[0:2].value.tolist(), [1, 2])
-            self.assertEqual(viewable_tensor[2:4].value.tolist(), [3, 4])
-            self.assertEqual(viewable_tensor[0:4:2].value.tolist(), [1, 3])
-            self.assertEqual(viewable_tensor[1:4:2].value.tolist(), [2, 4])
-            self.assertEqual(viewable_tensor[0:4:3].value.tolist(), [1, 4])
-            self.assertEqual(viewable_tensor[0:4:4].value.tolist(), [1])
-            self.assertEqual(viewable_tensor[0:4:5].value.tolist(), [1])
-            self.assertEqual(viewable_tensor[0:5:1].value.tolist(), [1, 2, 3, 4])
-        except Exception as e:
-            self.fail("Exception raised while testing getitem method: " + str(e))
 
         try:
             # Test the sanitize_slice method
