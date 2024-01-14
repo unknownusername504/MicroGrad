@@ -1,3 +1,4 @@
+import time
 from typing import ClassVar
 import multiprocessing
 import os
@@ -41,54 +42,70 @@ class WaveProcessWorker(multiprocessing.Process):
     input_queue: ClassVar[multiprocessing.Queue] = multiprocessing.Queue()
     output_queue: ClassVar[multiprocessing.Queue] = multiprocessing.Queue()
 
+    def __init__(self):
+        super().__init__()
+        self.num_cores = WaveProcessWorker.num_cores
+        self.num_hyperthreads = WaveProcessWorker.num_hyperthreads
+        self.num_threads_free = WaveProcessWorker.num_threads_free
+        self.core_thread_acquire_affinity_lock = (
+            WaveProcessWorker.core_thread_acquire_affinity_lock
+        )
+        self.core_thread_affinity_locks = WaveProcessWorker.core_thread_affinity_locks
+        self.input_queue = WaveProcessWorker.input_queue
+        self.output_queue = WaveProcessWorker.output_queue
+
     def enqueue(self, input):
-        WaveProcessWorker.input_queue.put(input)
+        print("Wave process worker enqueuing...")
+        self.input_queue.put(input)
+        print("Wave process worker enqueued")
 
     def dequeue(self, timeout=10):
-        return WaveProcessWorker.output_queue.get(timeout=timeout)
+        print("Wave process worker dequeuing...")
+        result = self.output_queue.get(timeout=timeout)
+        print("Wave process worker dequeued")
+        return result
 
     def lock_core_thread_affinity(self):
-        with WaveProcessWorker.core_thread_acquire_affinity_lock:
+        with self.core_thread_acquire_affinity_lock:
             # Find a core that is free
-            for core_id in range(WaveProcessWorker.num_cores):
-                for hyperthread_id in range(WaveProcessWorker.num_hyperthreads):
+            for core_id in range(self.num_cores):
+                for hyperthread_id in range(self.num_hyperthreads):
                     # Calculate the thread id
-                    core_thread_id = (
-                        core_id * WaveProcessWorker.num_hyperthreads + hyperthread_id
-                    )
+                    core_thread_id = core_id * self.num_hyperthreads + hyperthread_id
                     # Check the lock status
-                    if not WaveProcessWorker.core_thread_affinity_locks[
-                        core_thread_id
-                    ].locked():
+                    if not self.core_thread_affinity_locks[core_thread_id].locked():
                         # Return the core id
-                        WaveProcessWorker.num_threads_free.value -= 1
+                        with self.num_threads_free.get_lock():
+                            self.num_threads_free.value -= 1
                         os.sched_setaffinity(0, core_id)
                         return core_thread_id
             # If no cores are free, raise an exception
             raise Exception("No cores are free")
 
     def unlock_core_thread_affinity(self, core_thread_id):
-        with WaveProcessWorker.core_thread_acquire_affinity_lock:
+        with self.core_thread_acquire_affinity_lock:
             # Unlock the core
-            WaveProcessWorker.num_threads_free.value += 1
-            WaveProcessWorker.core_thread_affinity_locks[core_thread_id].release()
+            with self.num_threads_free.get_lock():
+                self.num_threads_free.value += 1
+            self.core_thread_affinity_locks[core_thread_id].release()
 
     class acquire_core_thread_affinity:
-        def __init__(self):
+        def __init__(self, worker):
             self.core_thread_id = None
+            self.worker = worker
 
         def __enter__(self):
-            self.core_thread_id = WaveProcessWorker.lock_core_thread_affinity()
+            self.core_thread_id = self.worker.lock_core_thread_affinity()
 
         def __exit__(self, exc_type, exc_value, traceback):
-            WaveProcessWorker.unlock_core_thread_affinity(self.core_thread_id)
+            self.worker.unlock_core_thread_affinity(self.core_thread_id)
 
     def create_pool(self, chunks: List):
         pool = multiprocessing.Pool(len(chunks))
         results = []
 
         def create_worker_thread(self, chunk):
-            with self.acquire_core_thread_affinity():
+            with WaveProcessWorker.acquire_core_thread_affinity(self):
                 # Call the function
                 try:
                     return chunk()
@@ -118,35 +135,45 @@ class WaveProcessWorker(multiprocessing.Process):
     def run(self):
         print("Wave process worker started")
         while True:
-            if WaveProcessWorker.input_queue.empty():
+            if self.input_queue.empty():
                 continue
             print("Wave process worker processing...")
-            input = WaveProcessWorker.input_queue.get()
-            try:
-                output = self.process(input, max_reduce=10)
-            except Exception as e:
-                output = e
+            input = self.input_queue.get()
+            output = self.process(input, max_reduce=10)
             print("Wave process worker processed")
-            WaveProcessWorker.output_queue.put(output)
+            self.output_queue.put(output)
 
     def process(self, input, max_reduce=10):
-        if max_reduce <= 0:
-            raise Exception("Max reduce exceeded")
-        # Process the operation on the wave process worker
-        # Chunk the data by calling the function's chunk method
-        args = input.args
-        chunks = input.func.chunk(args, WaveProcessWorker.num_threads_free.value)
-        # Perform the operation on the chunks
-        results = input.func.reduce(self.wave_process(chunks), input.func.output)
-        # Reduce the results by calling the function's reduce method
-        # This will return another wave process job
-        if len(results) > 1:
-            # Process the output again, recursively. Reduce the results until there is only one result.
-            output = self.process(output, max_reduce=max_reduce - 1)
-        elif len(results) == 1:
-            output = results[0]
-        else:
-            output = WaveProcessOutputNone()
+        try:
+            if max_reduce <= 0:
+                raise Exception("Max reduce exceeded")
+            # Process the operation on the wave process worker
+            # Chunk the data by calling the function's chunk method
+            args = input.args
+            print("args:", args)
+            with self.num_threads_free.get_lock():
+                num_threads_free = self.num_threads_free.value
+                # Take the free threads
+                self.num_threads_free.value = 0
+            chunks = input.func.chunk(args, num_threads_free)
+            # Add back unused threads
+            with self.num_threads_free.get_lock():
+                self.num_threads_free.value += num_threads_free - len(chunks)
+            # Perform the operation on the chunks
+            results = input.func.reduce(self.wave_process(chunks), input.func.output)
+            print("results:", results)
+            # Reduce the results by calling the function's reduce method
+            # This will return another wave process job
+            if len(results) > 1:
+                print("Results require reduce")
+                # Process the output again, recursively. Reduce the results until there is only one result.
+                output = self.process(output, max_reduce=max_reduce - 1)
+            elif len(results) == 1:
+                output = results[0]
+            else:
+                output = WaveProcessOutputNone()
+        except Exception as e:
+            output = e
         return output
 
     def wave_process(self, chunks: List):
@@ -163,6 +190,14 @@ class WaveProcess:
         if debug:
             print("Starting wave process worker...")
         self.worker.start()
+        # Wait for the wave process worker to start
+        max_wait = 10
+        while not self.worker.is_alive():
+            time.sleep(1)
+            print("Waiting for wave process worker to start...")
+            max_wait -= 1
+        if max_wait <= 0:
+            raise Exception("Max wait exceeded")
 
     def terminate(self, debug=False):
         # Terminate the wave process worker
@@ -189,19 +224,34 @@ class WaveRunner:
 
     def __init__(self, debug=False):
         self.debug = debug
+        self.wave_process = WaveRunner.wave_process
+        self.active_runners = WaveRunner.active_runners
 
     def __enter__(self):
         # Start the wave process
-        if WaveRunner.active_runners.value == 0:
-            WaveRunner.wave_process.start(debug=self.debug)
-        WaveRunner.active_runners.value += 1
+        with self.active_runners.get_lock():
+            if self.active_runners.value == 0:
+                self.wave_process.start(debug=self.debug)
+            self.active_runners.value += 1
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        WaveRunner.active_runners.value -= 1
-        if WaveRunner.active_runners.value == 0:
-            # Terminate the wave process
-            WaveRunner.wave_process.terminate(debug=self.debug)
+        with self.active_runners.get_lock():
+            self.active_runners.value -= 1
+            if self.active_runners.value == 0:
+                # Terminate the wave process
+                self.wave_process.terminate(debug=self.debug)
+
+    @staticmethod
+    def process(*args):
+        # Check if the wave process is running
+        with WaveRunner.active_runners.get_lock():
+            if WaveRunner.active_runners.value == 0:
+                return Exception("Wave process is not running")
+        # Schedule the function to the wave process
+        WaveRunner.wave_process.schedule(*args)
+        # Get the result from the wave process
+        return WaveRunner.wave_process.get_result(timeout=2)
 
 
 class Function:
@@ -210,10 +260,7 @@ class Function:
         self.output = output
 
     def process(self, *args):
-        # Schedule the function to the wave process
-        WaveRunner.wave_process.schedule(self, *args)
-        # Get the result from the wave process
-        result = WaveRunner.wave_process.get_result(timeout=2)
+        result = WaveRunner.process(self, *args)
         # Check if the result is exception
         if isinstance(result, Exception):
             raise result
