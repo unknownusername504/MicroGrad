@@ -22,7 +22,7 @@ class ViewableTensor(Tensor):
 
         # A list of slices, which starts as the full tensor if not specified
         if slices is None:
-            self.slices = [0, len(self)]
+            self.slices = [slice(0, len(self), 1)]
         else:
             # Check that the slices are valid
             for i, s in enumerate(slices):
@@ -217,11 +217,11 @@ class TestViewableTensor(unittest.TestCase):
             # Test the dtype
             self.assertEqual(viewable_tensor.dtype, np.uint8)
             # Test the value
-            self.assertEqual(viewable_tensor.value, np.array([1, 2, 3, 4]))
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
             # Test the viewable shape
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
             # Test the slices
-            self.assertEqual(viewable_tensor.slices, slice(0, 4, 1))
+            self.assertEqual(viewable_tensor.slices, [slice(0, 4, 1)])
         except Exception as e:
             self.fail("Exception raised while testing member variables: " + str(e))
 
@@ -229,7 +229,7 @@ class TestViewableTensor(unittest.TestCase):
             # Test the flatten method
             viewable_tensor.flatten()
             self.assertEqual(viewable_tensor.viewable_shape, (4,))
-            self.assertEqual(viewable_tensor.slices, slice(0, 4, 1))
+            self.assertEqual(viewable_tensor.slices, [slice(0, 4, 1)])
         except Exception as e:
             self.fail("Exception raised while testing flatten method: " + str(e))
 
@@ -237,7 +237,7 @@ class TestViewableTensor(unittest.TestCase):
             # Test the reshape method
             viewable_tensor.reshape((2, 2))
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
-            self.assertEqual(viewable_tensor.slices, slice(0, 4, 1))
+            self.assertEqual(viewable_tensor.slices, [slice(0, 4, 1)])
         except Exception as e:
             self.fail("Exception raised while testing reshape method: " + str(e))
 
@@ -245,36 +245,36 @@ class TestViewableTensor(unittest.TestCase):
             # Test the transpose method
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
-            self.assertEqual(viewable_tensor.value, np.array([1, 2, 3, 4]))
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
             # Transposed array will be [[1, 3], [2, 4]]
             self.assertEqual(
-                viewable_tensor.get_contiguous().value, np.array([[1, 3], [2, 4]])
+                viewable_tensor.get_contiguous().value.tolist(), [1, 3, 2, 4]
             )
             # Transpose back
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
-            self.assertEqual(viewable_tensor.value, np.array([1, 2, 3, 4]))
+            self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
             # Transposed array will be [[1, 2], [3, 4]]
             self.assertEqual(
-                viewable_tensor.get_contiguous().value, np.array([[1, 2], [3, 4]])
+                viewable_tensor.get_contiguous().value.tolist(), [1, 2, 3, 4]
             )
         except Exception as e:
             self.fail("Exception raised while testing transpose method: " + str(e))
 
         try:
             # Test the getitem method
-            self.assertEqual(viewable_tensor[0].value, np.array([1]))
-            self.assertEqual(viewable_tensor[1].value, np.array([2]))
-            self.assertEqual(viewable_tensor[2].value, np.array([3]))
-            self.assertEqual(viewable_tensor[3].value, np.array([4]))
-            self.assertEqual(viewable_tensor[0:2].value, np.array([1, 2]))
-            self.assertEqual(viewable_tensor[2:4].value, np.array([3, 4]))
-            self.assertEqual(viewable_tensor[0:4:2].value, np.array([1, 3]))
-            self.assertEqual(viewable_tensor[1:4:2].value, np.array([2, 4]))
-            self.assertEqual(viewable_tensor[0:4:3].value, np.array([1, 4]))
-            self.assertEqual(viewable_tensor[0:4:4].value, np.array([1]))
-            self.assertEqual(viewable_tensor[0:4:5].value, np.array([1]))
-            self.assertEqual(viewable_tensor[0:5:1].value, np.array([1, 2, 3, 4]))
+            self.assertEqual(viewable_tensor[0].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[1].value.tolist(), [2])
+            self.assertEqual(viewable_tensor[2].value.tolist(), [3])
+            self.assertEqual(viewable_tensor[3].value.tolist(), [4])
+            self.assertEqual(viewable_tensor[0:2].value.tolist(), [1, 2])
+            self.assertEqual(viewable_tensor[2:4].value.tolist(), [3, 4])
+            self.assertEqual(viewable_tensor[0:4:2].value.tolist(), [1, 3])
+            self.assertEqual(viewable_tensor[1:4:2].value.tolist(), [2, 4])
+            self.assertEqual(viewable_tensor[0:4:3].value.tolist(), [1, 4])
+            self.assertEqual(viewable_tensor[0:4:4].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[0:4:5].value.tolist(), [1])
+            self.assertEqual(viewable_tensor[0:5:1].value.tolist(), [1, 2, 3, 4])
         except Exception as e:
             self.fail("Exception raised while testing getitem method: " + str(e))
 

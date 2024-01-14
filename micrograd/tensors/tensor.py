@@ -27,6 +27,9 @@ class Tensor:
         self.dtype = dtype
         return self
 
+    def tolist(self):
+        return self.value.tolist()
+
     # Slice the tensor
     def __getitem__(self, key: Union[int, slice]) -> "Tensor":
         # If the key is an integer
