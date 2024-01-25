@@ -78,75 +78,41 @@ class ViewableTensor(Tensor):
     # Also ensure the stop is exactly on a step from start
     # Called in the constructor and when slicing views
     def simplify_slice(self, this_slice: slice) -> slice:
-        try:
-            start = 0 if this_slice.start is None else this_slice.start
-            stop = len(self) if this_slice.stop is None else this_slice.stop
-            step = 1 if this_slice.step is None else this_slice.step
-            # Handle negative start/stop
-            if start < 0:
-                start = max((len(self) + start), 0)
-            if stop < 0:
-                stop = len(self) + stop
-                if stop < 0:
-                    if step > 0:
-                        return slice(0, 0, 1)
-                    else:
-                        if start == 0:
-                            return slice(0, 0, 1)
-                        # Very negative stops behave like no stop but
-                        # we emulate this with a just out of range stop
-                        stop = -len(self) - 1
-            # Handle greater than length start/stop
-            if start > len(self):
+        if self.slice_length(this_slice) == 0:
+            simplified_slice = slice(0, 0, 1)
+        else:
+            # Get the start, stop, and step
+            start = this_slice.start
+            stop = this_slice.stop
+            step = this_slice.step
+            # If the step is none then set it to 1
+            if step is None:
+                step = 1
+            # If the start is none then set it to 0
+            if start is None:
                 if step > 0:
-                    start = len(self)
+                    start = 0
                 else:
                     start = len(self) - 1
-            if stop > len(self):
-                stop = len(self)
-            # Handle negative step
-            if step < 0:
-                # If the magnitude of the step is greater than the length of the slice then set the step to 1
-                if abs(step) > abs(stop - start):
-                    if start > stop:
-                        return slice(start, start + 1, 1)
-                    else:
-                        return slice(0, 0, 1)
-            # Check that the first step taken is inside the array
-            if (
-                (start == stop)
-                or ((start < stop) and (step < 0))
-                or ((start > stop) and (step > 0))
-            ):
-                return slice(0, 0, 1)
-            num_steps = abs(stop - start) // abs(step)
-            if (start + (num_steps * step)) < stop:
-                num_steps += 1
-            if num_steps == 0:
-                return slice(0, 0, 1)
-            # If the slice would only have 1 element then return a slice a step of 1 from start
-            if num_steps == 1:
-                return slice(start, start + 1, 1)
-            # Ensure stop will be on a step from start but not greater than the length of the slice
-            stop = min((start + (num_steps * step)), len(self))
-            # Handle step greater than length of slice
-            len_slice = abs(stop - start)
-            if abs(step) >= len_slice:
-                return slice(start, start + 1, 1)
-            # Assert that the length of the slice is not 0 or negative or greater than the length of the tensor
-            assert (len_slice > 0) and (len_slice <= len(self))
-            # Assert that the range of the slice is valid
-            assert (start >= 0) and (start <= len(self))
-            if not (stop == (len(self) - 1)):
-                assert (stop >= 0) and (stop <= len(self))
-        except AssertionError:
-            raise ValueError("Invalid slice with start, stop, step:", start, stop, step)
-        return slice(start, stop, step)
+            # If the stop is none then set it to the length of the tensor
+            if stop is None:
+                if step > 0:
+                    stop = len(self)
+                else:
+                    stop = -len(self) - 1
+            # Clip the start and stop to the length of the tensor
+            start = max(min(start, len(self)), -len(self))
+            stop = max(min(stop, len(self)), (-len(self) - 1))
+            simplified_slice = slice(start, stop, step)
+        return simplified_slice
+
+    def slice_length(self, this_slice: slice):
+        return len(range(*this_slice.indices(len(self))))
 
     # Set the slices of the viewable tensor
     def set_slices(self, slices: List[slice]):
         for i, this_slice in enumerate(slices):
-            # Populate none values in the slices and sanitize the slices
+            # Populate none values in the slices
             slices[i] = self.simplify_slice(this_slice)
         self.slices = slices
         self.combine_slices()
@@ -371,40 +337,19 @@ class TestViewableTensor(unittest.TestCase):
         except Exception as e:
             self.fail("Exception raised while testing reshape method: " + str(e))
 
-        # Define a method to test that the test expressions are equal on normal lists
-        # and then that our simplify_slice method returns the same result
-        def test_simplify_slice(
-            arr: List[int], test_slice: slice, expected_slice: Optional[slice] = None
-        ):
+        # Define a method to test slice_length
+        def test_slice_length(arr: List[int], test_slice: slice):
             # Save a deepcopy of the input array
             arr_cp = arr[:]
-            test_simplified_slice = viewable_tensor.simplify_slice(test_slice)
-            print(test_slice, test_simplified_slice, expected_slice)
-            self.assertEqual(arr[test_slice], arr[test_simplified_slice])
-            if expected_slice is not None:
-                self.assertEqual(arr[test_slice], arr[expected_slice])
-                self.assertEqual(test_simplified_slice, expected_slice)
+            test_slice_length = viewable_tensor.slice_length(test_slice)
+            self.assertEqual(len(arr[test_slice]), test_slice_length)
             # Assert that the input array is not modified
             self.assertEqual(arr, arr_cp)
 
         try:
-            # Test the simplify_slice method
-            # Test some known slice results
-            test_simplify_slice(test_arr, slice(0, 4, 1), slice(0, 4, 1))
-            test_simplify_slice(test_arr, slice(0, 0, 1), slice(0, 0, 1))
-            test_simplify_slice(test_arr, slice(0, 1, 1), slice(0, 1, 1))
-            test_simplify_slice(test_arr, slice(0, 2, -1), slice(0, 0, 1))
-            test_simplify_slice(test_arr, slice(0, 1, 2), slice(0, 1, 1))
-            test_simplify_slice(test_arr, slice(0, 2, 2), slice(0, 1, 1))
-            test_simplify_slice(test_arr, slice(0, 3, 2), slice(0, 4, 2))
-            test_simplify_slice(test_arr, slice(0, 1, -1), slice(0, 0, 1))
-        except Exception as e:
-            self.fail("Exception raised while testing simplify_slice method: " + str(e))
-
-        try:
-            # Test the simplify_slice method
+            # Test the slice_length method
             # Test random slices
-            print("Testing random slices...")
+            print("Testing random slices for slice_length method...")
             test_num = 100
             random_key = None
             for _ in range(test_num):
@@ -413,6 +358,55 @@ class TestViewableTensor(unittest.TestCase):
                 step = np.random.randint(-8, 8)
                 if step == 0:
                     step = 1
+                # Replace with None sometimes
+                if np.random.random() < 0.05:
+                    if np.random.random() < 0.33:
+                        start = None
+                    elif np.random.random() < 0.5:
+                        stop = None
+                    else:
+                        step = None
+                random_key = slice(start, stop, step)
+                test_slice_length(test_arr, random_key)
+            print("Finished testing random slices")
+        except Exception as e:
+            self.fail(
+                "Exception raised while testing slice_length method with key({}): ".format(
+                    random_key
+                )
+                + str(e)
+            )
+
+        # Define a method to test that the test expressions are equal on normal lists
+        # and then that our simplify_slice method returns the same result
+        def test_simplify_slice(arr: List[int], test_slice: slice):
+            # Save a deepcopy of the input array
+            arr_cp = arr[:]
+            test_simplified_slice = viewable_tensor.simplify_slice(test_slice)
+            self.assertEqual(arr[test_slice], arr[test_simplified_slice])
+            # Assert that the input array is not modified
+            self.assertEqual(arr, arr_cp)
+
+        try:
+            # Test the simplify_slice method
+            # Test random slices
+            print("Testing random slices for simplify_slice method...")
+            test_num = 100
+            random_key = None
+            for _ in range(test_num):
+                start = np.random.randint(-8, 8)
+                stop = np.random.randint(-8, 8)
+                step = np.random.randint(-8, 8)
+                if step == 0:
+                    step = 1
+                # Replace with None sometimes
+                if np.random.random() < 0.05:
+                    if np.random.random() < 0.33:
+                        start = None
+                    elif np.random.random() < 0.5:
+                        stop = None
+                    else:
+                        step = None
                 random_key = slice(start, stop, step)
                 test_simplify_slice(test_arr, random_key)
             print("Finished testing random slices")
@@ -454,6 +448,14 @@ class TestViewableTensor(unittest.TestCase):
                 step = np.random.randint(-8, 8)
                 if step == 0:
                     step = 1
+                # Replace with None sometimes
+                if np.random.random() < 0.05:
+                    if np.random.random() < 0.33:
+                        start = None
+                    elif np.random.random() < 0.5:
+                        stop = None
+                    else:
+                        step = None
                 random_key = slice(start, stop, step)
                 test_getitem(test_arr, viewable_tensor, random_key)
         except Exception as e:
@@ -474,7 +476,6 @@ class TestViewableTensor(unittest.TestCase):
         ):
             # Check for equality
             self.assertEqual(viewable_tensor.value.tolist(), arr)
-            print(arr[key], key, value)
             # Set the value
             arr[key] = value
             viewable_tensor[key] = value
@@ -485,7 +486,7 @@ class TestViewableTensor(unittest.TestCase):
             # Create a test array
             test_setitem_arr = [1, 2, 3, 4]
             # Test the setitem method
-            print("Testing random key, value int pairs...")
+            print("Testing random key, value int pairs for setitem method...")
             test_num = 100
             random_key = None
             random_value = None
@@ -496,7 +497,7 @@ class TestViewableTensor(unittest.TestCase):
                     test_setitem_arr, viewable_tensor, random_key, random_value
                 )
             print("Finished testing random key, value int pairs")
-            print("Testing random key, value slice pairs...")
+            print("Testing random key, value slice pairs for setitem method...")
             test_num = 100
             for _ in range(test_num):
                 start = np.random.randint(-8, 8)
@@ -504,11 +505,17 @@ class TestViewableTensor(unittest.TestCase):
                 step = np.random.randint(-8, 8)
                 if step == 0:
                     step = 1
+                # Replace with None sometimes
+                if np.random.random() < 0.05:
+                    if np.random.random() < 0.33:
+                        start = None
+                    elif np.random.random() < 0.5:
+                        stop = None
+                    else:
+                        step = None
                 random_key = slice(start, stop, step)
                 sanitized_key = viewable_tensor.simplify_slice(random_key)
-                length = abs(sanitized_key.stop - sanitized_key.start) // abs(
-                    sanitized_key.step
-                )
+                length = viewable_tensor.slice_length(sanitized_key)
                 if length == 0:
                     random_value = []
                 else:
@@ -531,6 +538,7 @@ class TestViewableTensor(unittest.TestCase):
 
         try:
             # Test the combine_slices method
+            print("Testing combine_slices method...")
             viewable_tensor.set_slices(
                 [
                     slice(0, 1, 1),
@@ -572,13 +580,15 @@ class TestViewableTensor(unittest.TestCase):
 
         try:
             # Test the transpose method
+            print("Testing transpose method...")
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
             self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
+            transposed_array = viewable_tensor.get_contiguous().value.tolist()
+            print(transposed_array)
+            print(viewable_tensor.viewable_shape)
             # Transposed array will be [[1, 3], [2, 4]]
-            self.assertEqual(
-                viewable_tensor.get_contiguous().value.tolist(), [1, 3, 2, 4]
-            )
+            self.assertEqual(transposed_array, [1, 3, 2, 4])
             # Transpose back
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
