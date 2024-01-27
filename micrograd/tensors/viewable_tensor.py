@@ -6,6 +6,7 @@ import unittest
 
 import numpy as np
 from micrograd.tensors.tensor import Tensor
+from micrograd.utils.debug_utils import debug_print
 
 
 class ViewableTensor(Tensor):
@@ -17,7 +18,6 @@ class ViewableTensor(Tensor):
         # Initialize the super class with the tensor's attributes
         super().__init__(
             shape=tensor.shape,
-            dtype=tensor.dtype,
             value=tensor.value,
             requires_grad=tensor.requires_grad,
         )
@@ -152,7 +152,6 @@ class ViewableTensor(Tensor):
         # Create the tensor
         tensor_slice = self.tensor_type(
             shape=shape_slice,
-            dtype=self.dtype,
             value=value_slice,
             requires_grad=self.requires_grad,
         )
@@ -218,28 +217,39 @@ class ViewableTensor(Tensor):
     # Is not guaranteed to find the optimal solution
     def combine_slices(self):
         # Populate the first slice
-        new_slices = [
-            slice(self.slices[0].start, self.slices[0].stop, self.slices[0].step)
-        ]
+        new_slices = []
         # Iterate through the slices
-        for index in range(1, len(self.slices)):
-            last_slice = new_slices[-1]
+        for index in range(0, len(self.slices)):
             next_slice = self.slices[index]
+            slice_length = self.slice_length(next_slice)
+            if slice_length == 0:
+                # Skip empty slices
+                continue
+            # If slice arr is empty then add this slice and continue
+            if len(new_slices) == 0:
+                new_slices.append(next_slice)
+                continue
+            # Get the last slice
+            last_slice = new_slices[-1]
+            # If the slices have negative elements then they cannot be combined yet
+            any_neg = (
+                (last_slice.step < 0)
+                or (next_slice.step < 0)
+                or (last_slice.start < 0)
+                or (next_slice.start < 0)
+                or (last_slice.stop < 0)
+                or (next_slice.stop < 0)
+            )
             # Slices can be combined if they have the same step and the stop of the first is the start of the second
             # Or if the length of the next slice is 1
-            if (last_slice.step == next_slice.step) and (
-                last_slice.stop == next_slice.start
+            if (
+                not any_neg
+                and (last_slice.stop == next_slice.start)
+                and ((last_slice.step == next_slice.step) or (slice_length == 1))
             ):
                 # Combine the slices
                 new_slices[-1] = slice(
                     last_slice.start, next_slice.stop, last_slice.step
-                )
-            elif (abs(next_slice.stop - next_slice.start) // abs(next_slice.step)) == 1:
-                # Combine the slices
-                new_slices[-1] = slice(
-                    last_slice.start,
-                    next_slice.start + last_slice.step,
-                    last_slice.step,
                 )
             else:
                 # Add the slice
@@ -266,7 +276,8 @@ class ViewableTensor(Tensor):
             start = this_slice.start
             stop = this_slice.stop
             step = this_slice.step
-            for slice_index in range((stop - start) // step):
+            slice_length = self.slice_length(this_slice)
+            for slice_index in range(slice_length):
                 slice_index_real = (slice_index * step) + start
                 # Set the slice
                 matrix_post[matrix_index] = slice_index_real
@@ -280,10 +291,18 @@ class ViewableTensor(Tensor):
         matrix_post = matrix_post.flatten()
         # Iterate through the matrixes and update the slices
         # This is done by iterating through the matrix and creating contiguous slices
-        self.slices = [
-            slice(matrix_post[i], matrix_post[i + 1], 1)
-            for i in range(len(matrix_post) - 1)
-        ]
+        self.slices = []
+        for index in range(len(matrix_post)):
+            # Get the index
+            matrix_index = matrix_post[index]
+            # Get the start, stop, and step
+            start = matrix_index
+            stop = matrix_index + 1
+            step = 1
+            # Create the slice
+            this_slice = slice(start, stop, step)
+            # Append the slice
+            self.slices.append(this_slice)
         # See if the slices can be combined
         self.combine_slices()
         # Set the viewable shape by transposing the axes
@@ -296,7 +315,7 @@ class TestViewableTensor(unittest.TestCase):
         try:
             # Create the tensor
             tensor = Tensor(
-                shape=(2, 2), dtype=np.uint8, value=np.array([[1, 2], [3, 4]])
+                shape=(2, 2), value=np.array([[1, 2], [3, 4]], dtype=np.uint8)
             )
             # Create the viewable tensor
             viewable_tensor = ViewableTensor(tensor)
@@ -349,7 +368,7 @@ class TestViewableTensor(unittest.TestCase):
         try:
             # Test the slice_length method
             # Test random slices
-            print("Testing random slices for slice_length method...")
+            debug_print("Testing random slices for slice_length method...")
             test_num = 100
             random_key = None
             for _ in range(test_num):
@@ -368,7 +387,7 @@ class TestViewableTensor(unittest.TestCase):
                         step = None
                 random_key = slice(start, stop, step)
                 test_slice_length(test_arr, random_key)
-            print("Finished testing random slices")
+            debug_print("Finished testing random slices")
         except Exception as e:
             self.fail(
                 "Exception raised while testing slice_length method with key({}): ".format(
@@ -390,7 +409,7 @@ class TestViewableTensor(unittest.TestCase):
         try:
             # Test the simplify_slice method
             # Test random slices
-            print("Testing random slices for simplify_slice method...")
+            debug_print("Testing random slices for simplify_slice method...")
             test_num = 100
             random_key = None
             for _ in range(test_num):
@@ -409,7 +428,7 @@ class TestViewableTensor(unittest.TestCase):
                         step = None
                 random_key = slice(start, stop, step)
                 test_simplify_slice(test_arr, random_key)
-            print("Finished testing random slices")
+            debug_print("Finished testing random slices")
         except Exception as e:
             self.fail(
                 "Exception raised while testing simplify_slice method with key({}): ".format(
@@ -434,14 +453,14 @@ class TestViewableTensor(unittest.TestCase):
 
         try:
             # Perform random getitem tests
-            print("Testing random int getitem...")
+            debug_print("Testing random int getitem...")
             test_num = 100
             random_key = None
             for _ in range(test_num):
                 random_key = np.random.randint(0, 4)
                 test_getitem(test_arr, viewable_tensor, random_key)
-            print("Finished testing random int getitem")
-            print("Testing random slice getitem...")
+            debug_print("Finished testing random int getitem")
+            debug_print("Testing random slice getitem...")
             for _ in range(test_num):
                 start = np.random.randint(-8, 8)
                 stop = np.random.randint(-8, 8)
@@ -486,7 +505,7 @@ class TestViewableTensor(unittest.TestCase):
             # Create a test array
             test_setitem_arr = [1, 2, 3, 4]
             # Test the setitem method
-            print("Testing random key, value int pairs for setitem method...")
+            debug_print("Testing random key, value int pairs for setitem method...")
             test_num = 100
             random_key = None
             random_value = None
@@ -496,8 +515,8 @@ class TestViewableTensor(unittest.TestCase):
                 test_setitem(
                     test_setitem_arr, viewable_tensor, random_key, random_value
                 )
-            print("Finished testing random key, value int pairs")
-            print("Testing random key, value slice pairs for setitem method...")
+            debug_print("Finished testing random key, value int pairs")
+            debug_print("Testing random key, value slice pairs for setitem method...")
             test_num = 100
             for _ in range(test_num):
                 start = np.random.randint(-8, 8)
@@ -523,7 +542,7 @@ class TestViewableTensor(unittest.TestCase):
                 test_setitem(
                     test_setitem_arr, viewable_tensor, random_key, random_value
                 )
-            print("Finished testing random key, value slice pairs")
+            debug_print("Finished testing random key, value slice pairs")
             # Reset the viewable tensor
             test_setitem(
                 test_setitem_arr, viewable_tensor, slice(0, 4, 1), [1, 2, 3, 4]
@@ -538,7 +557,7 @@ class TestViewableTensor(unittest.TestCase):
 
         try:
             # Test the combine_slices method
-            print("Testing combine_slices method...")
+            debug_print("Testing combine_slices method...")
             viewable_tensor.set_slices(
                 [
                     slice(0, 1, 1),
@@ -578,15 +597,80 @@ class TestViewableTensor(unittest.TestCase):
         except Exception as e:
             self.fail("Exception raised while testing combine_slices method: " + str(e))
 
+        # Method to test random slice combinations against a test array
+        def test_combine_slices(viewable_tensor: ViewableTensor, slices: List[slice]):
+            # Save a deepcopy of the input array
+            arr = viewable_tensor.value.tolist()
+            # Save the original slices
+            original_slices = slices[:]
+            # Combine the slices
+            viewable_tensor.set_slices(slices)
+            # Extract the slices
+            slices = viewable_tensor.slices
+            # Use the slices to get the value
+            value_arr = []
+            for this_slice in slices:
+                value_arr += arr[this_slice]
+            original_value_arr = []
+            for this_slice in original_slices:
+                original_value_arr += arr[this_slice]
+            # Ensure the underlying array is not modified
+            self.assertEqual(viewable_tensor.value.tolist(), arr)
+            # Test the value
+            self.assertEqual(value_arr, original_value_arr)
+
+        try:
+            # Test the combine_slices method
+            debug_print(
+                "Testing random slice combinations for combine_slices method..."
+            )
+            test_num = 100
+            this_test_num = 0
+            random_slices = None
+            for _ in range(test_num):
+                this_test_num += 1
+                random_slice_1_start = np.random.randint(-8, 8)
+                random_slice_1_stop = np.random.randint(-8, 8)
+                random_slice_1_step = np.random.randint(-8, 8)
+                if random_slice_1_step == 0:
+                    random_slice_1_step = 1
+                random_slice_2_start = np.random.randint(-8, 8)
+                random_slice_2_stop = np.random.randint(-8, 8)
+                random_slice_2_step = np.random.randint(-8, 8)
+                if random_slice_2_step == 0:
+                    random_slice_2_step = 1
+                random_slice_1 = slice(
+                    random_slice_1_start, random_slice_1_stop, random_slice_1_step
+                )
+                random_slice_2 = slice(
+                    random_slice_2_start, random_slice_2_stop, random_slice_2_step
+                )
+                random_slices = [random_slice_1, random_slice_2]
+                test_combine_slices(viewable_tensor, random_slices)
+            debug_print("Finished testing random slice combinations")
+        except Exception as e:
+            self.fail(
+                "Exception raised while testing at test num ({}) combine_slices method with slices({}): ".format(
+                    this_test_num, random_slices
+                )
+                + str(e)
+            )
+
+        # Reset the viewable tensor slices
+        viewable_tensor.set_slices(
+            [
+                slice(0, 4, 1),
+            ]
+        )
+
+        # NOTE: Transpose does not actually work yet, just this one test case
         try:
             # Test the transpose method
-            print("Testing transpose method...")
+            debug_print("Testing transpose method...")
             viewable_tensor.transpose()
             self.assertEqual(viewable_tensor.viewable_shape, (2, 2))
             self.assertEqual(viewable_tensor.value.tolist(), [1, 2, 3, 4])
             transposed_array = viewable_tensor.get_contiguous().value.tolist()
-            print(transposed_array)
-            print(viewable_tensor.viewable_shape)
             # Transposed array will be [[1, 3], [2, 4]]
             self.assertEqual(transposed_array, [1, 3, 2, 4])
             # Transpose back
@@ -602,10 +686,10 @@ class TestViewableTensor(unittest.TestCase):
 
 
 def unittest_viewable_tensor():
-    print("Running unit tests for ViewableTensor...")
+    debug_print("Running unit tests for ViewableTensor...")
     # Run the unit tests
     unittest.main()
-    print("Finished unit tests for ViewableTensor")
+    debug_print("Finished unit tests for ViewableTensor")
 
 
 if __name__ == "__main__":

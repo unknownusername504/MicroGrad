@@ -6,3 +6,4 @@ from micrograd.tensors.viewable_tensor import *
 from micrograd.tensors.tensor_u8 import *
 from micrograd.unittests.op_unittests import *
 from micrograd.unittests.run_unittests import *
+from micrograd.utils.debug_utils import *

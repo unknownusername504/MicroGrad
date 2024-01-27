@@ -7,10 +7,14 @@ from micrograd.tensors.tensor import Tensor
 # All operations are quantized and performed on the CPU
 class TensorU8(Tensor):
     def __init__(self, shape, value=None, requires_grad=False):
-        self.dtype = np.uint8
-        super().__init__(
-            shape=shape, dtype=self.dtype, value=value, requires_grad=requires_grad
-        )
+        if value is None:
+            value = np.zeros(shape, dtype=np.uint8)
+        else:
+            # Check if the dtype is uint8
+            if value.dtype != np.uint8:
+                # Convert the value to uint8
+                value = value.astype(np.uint8)
+        super().__init__(shape=shape, value=value, requires_grad=requires_grad)
 
     def __add__(self, other):
         if isinstance(other, TensorU8):

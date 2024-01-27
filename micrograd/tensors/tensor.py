@@ -1,14 +1,21 @@
 from typing import List, Tuple, Union
 import numpy as np
 
+from micrograd.utils.debug_utils import debug_print
+
 
 class Tensor:
-    def __init__(self, shape, dtype, value=None, requires_grad=False):
+    def __init__(
+        self,
+        shape,
+        value: np.ndarray = None,
+        requires_grad=False,
+    ):
         self.shape = shape
-        self.dtype = dtype
+        self.dtype = value.dtype if value is not None else np.float64
         # If the value is None then create a new numpy array of zeros
         if value is None:
-            self.value = np.zeros(shape, dtype=dtype)
+            self.value = np.zeros(shape, dtype=self.dtype)
         else:
             self.value = value
         self.requires_grad = requires_grad
@@ -31,19 +38,45 @@ class Tensor:
         return self.value.tolist()
 
     # Slice the tensor
-    def __getitem__(self, key: Union[int, slice]) -> "Tensor":
-        # If the key is an integer
-        if type(key) is int:
-            # Make into a slice
-            key = slice(key, key + 1)
+    def __getitem__(self, key: Union[int, slice, Tuple[Union[int, slice]]]) -> "Tensor":
+        debug_print("key:", key)
+        num_vals = np.prod(self.shape)
+        debug_print("val_len:", num_vals)
         # Make sure the key range is valid
-        if key.start < 0 or key.stop > len(self.value):
-            raise Exception("Invalid key range")
+        if type(key) is tuple:
+            indices = np.ravel_multi_index(key, self.shape)
+            if isinstance(indices, np.ndarray):
+                for index in indices:
+                    if (index < 0) or (index > num_vals):
+                        raise Exception("Invalid key range")
+            elif isinstance(indices, np.number):
+                if (indices < 0) or (indices > num_vals):
+                    raise Exception("Invalid key range")
+            else:
+                debug_print("indices:", indices)
+                debug_print("type(indices):", type(indices))
+                raise Exception("Invalid indices type")
+        if type(key) is int:
+            if (key < 0) or (key > num_vals):
+                raise Exception("Invalid key range")
+        if type(key) is slice:
+            if (key.start < 0) or (key.stop > num_vals):
+                raise Exception("Invalid key range")
         tensor_type = type(self)
+        debug_print("getting value_slice")
         # Get the value
         value_slice = self.value[key]
-        # Length of the slice
-        length = len(value_slice)
+        debug_print("value_slice:", value_slice)
+        if isinstance(value_slice, np.ndarray):
+            # Length of the slice
+            length = len(value_slice)
+        elif isinstance(value_slice, np.number):
+            # Length of the slice
+            length = 1
+        else:
+            debug_print("value_slice:", value_slice)
+            debug_print("type(value_slice):", type(value_slice))
+            raise Exception("Invalid value type")
         # Shape is now flattened
         shape_slice = (length,)
         # Create the tensor
@@ -239,6 +272,24 @@ class Tensor:
                 output_shape.append(dim1)
         # Return the output shape
         return tuple(output_shape)
+
+    @staticmethod
+    def get_output_type(x: "Tensor", y: "Tensor") -> Tuple[type, type]:
+        # We want to determine the output type based on the input types
+        # If the tensor types are not the same then take the higher type
+        # List of known data types in order of precedence
+        debug_print("in get_output_type")
+        known_data_types = [np.float64, np.uint8]
+        data_type_1 = x.dtype
+        data_type_2 = y.dtype
+        print("data_type_1:", data_type_1)
+        print("data_type_2:", data_type_2)
+        for data_type in known_data_types:
+            if data_type_1 == data_type:
+                return type(x), data_type
+            if data_type_2 == data_type:
+                return type(y), data_type
+        raise Exception("Unknown data type")
 
     @staticmethod
     def broadcast(x: "Tensor", y: "Tensor") -> Tuple["Tensor", "Tensor"]:

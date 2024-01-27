@@ -11,9 +11,11 @@ setup(
         "micrograd.layers",
         "micrograd.optimizers",
         "micrograd.functions",
+        "micrograd.utils",
     ],
     install_requires=[
         "numpy",
+        "psutil",
     ],
     python_requires=">=3.8",
 )
