@@ -7,32 +7,31 @@ from micrograd.utils.debug_utils import debug_print
 
 
 class Add(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
+    def __init__(self, inputs):
+        super().__init__(inputs)
         # Set the gradient function
         self.inputs[0].grad_fn = self
         self.inputs[1].grad_fn = self
+        x = self.inputs[0]
+        y = self.inputs[1]
+        output_tensor_type = Tensor.get_output_tensor_type(x, y)
+        output_shape = Tensor.get_output_shape(x, y)
+        self.output = output_tensor_type(shape=output_shape, requires_grad=True)
         self.output.grad_fn = self
 
     def forward(self):
         self.output.value = self.add(self.inputs[0], self.inputs[1])
-        return self.output.value
+        return self.output
 
     def backward(self):
         self.inputs[0].grad = self.add(self.inputs[0], self.output)
         self.inputs[1].grad = self.add(self.inputs[1], self.output)
 
     def add(self, x, y):
-        # If the tensors are not the same shape
-        # Broadcast the tensors
-        output_shape = Tensor.get_output_shape(x, y)
-        x, y = Tensor.broadcast(x, y)
         debug_print("add x:", x)
         debug_print("add y:", y)
-        # Schedule the job to the wave process worker
-        # Return the output tensor
-        output = self.process(x, y)
-        output = output.reshape(output_shape)
+        # Perform the addition
+        output = x.value + y.value
         debug_print("output:", output)
         return output
 
@@ -48,7 +47,8 @@ class Add(Function):
         # Determine the output shape based on the input shapes
         output_shape = Tensor.get_output_shape(args[0], args[1])
         # Detemine the output_type based on the input types
-        output_tensor_type, output_data_type = Tensor.get_output_type(args[0], args[1])
+        output_tensor_type = Tensor.get_output_tensor_type(args[0], args[1])
+        output_data_type = Tensor.get_output_data_type(args[0], args[1])
         debug_print("output_shape:", output_shape)
         debug_print("output_tensor_type:", output_tensor_type)
         debug_print("output_data_type:", output_data_type)
@@ -114,46 +114,44 @@ class Add(Function):
             debug_print("Trying to create input tensors")
             inputs = [chunks[0][i], chunks[1][i]]
             debug_print("inputs:", inputs)
-            # Create the output tensor
-            debug_print("Trying to create output tensor")
-            this_output_shape = Tensor.get_output_shape(inputs[0], inputs[1])
-            debug_print("this_output_shape:", this_output_shape)
-            output = np.zeros(shape=this_output_shape, dtype=output_data_type)
-            output = output_tensor_type(
-                shape=this_output_shape, value=output, requires_grad=requires_grad
-            )
-            debug_print("output:", output)
             # Create the add function
-            add = Add(inputs, output)
+            add = Add(inputs)
             # Append the new Add object
             returns.append(add)
         debug_print("returns from chunk:", returns)
         return returns
 
     @staticmethod
-    def reduce(results: List[Function], output: Tensor) -> List[Tensor]:
+    def reduce(results: List[Tensor], output: Tensor):
         debug_print("reduce results:", results)
+        debug_print("reduce output:", output)
         # We want to reduce the results into one result
         # We will assign the chunks to the output tensor
         # Get the number of chunks
         num_chunks = len(results)
+        debug_print("num_chunks:", num_chunks)
         output_index = 0
-        debug_print("output:", output)
+        debug_print("output starting reduce:", output)
+        output_shape = output.shape
         for i in range(num_chunks):
+            debug_print("chunk num:", i)
             # Get the chunk output
-            chunk_output = results[i].output
+            chunk_output = results[i].flatten()
             # Get the shape of the chunk_output
             shape = chunk_output.shape
             # Get the size of the chunk_output
             size = np.prod(shape)
+            debug_print("chunk size:", size)
+            if size == 0:
+                continue
             indices = [index for index in range(output_index, output_index + size)]
-            output_tuple = np.unravel_index(indices, shape)
+            output_tuple = np.unravel_index(indices, output_shape)
+            debug_print("output_tuple:", output_tuple)
             # Assign the chunk_output to the output tensor
             output[output_tuple] = chunk_output.value
             # Increment the output index
             output_index += size
-        debug_print("output:", output)
-        return [output]
+        debug_print("output ending reduce:", output)
 
 
 class Sub(Function):

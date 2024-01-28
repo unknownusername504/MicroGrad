@@ -87,16 +87,52 @@ class Tensor:
     # Set slice of the tensor
     def __setitem__(
         self,
-        key: Union[int, slice],
+        key: Union[int, slice, Tuple[Union[int, slice]]],
         value: Union[List, np.ndarray, "Tensor", np.number, int, float],
     ):
-        # If the key is an integer
-        if type(key) is int:
-            # Make into a slice
-            key = slice(key, key + 1)
+        debug_print("key:", key)
+        num_vals = np.prod(self.shape)
+        num_indices = 0
+        debug_print("val_len:", num_vals)
         # Make sure the key range is valid
-        if key.start < 0 or key.stop > len(self.value):
+        if type(key) is tuple:
+            debug_print("key is tuple")
+            if len(key) == 0:
+                raise Exception("Invalid key range")
+            if len(key) == 1:
+                # If the key is a single value then convert it to a np.number
+                indices = key[0]
+            else:
+                indices = np.ravel_multi_index(key, self.shape)
+            debug_print("indices:", indices)
+            if isinstance(indices, np.ndarray):
+                num_indices = len(indices)
+                for index in indices:
+                    if (index < 0) or (index > num_vals):
+                        raise Exception("Invalid key range")
+            elif isinstance(indices, np.number):
+                num_indices = 1
+                if (indices < 0) or (indices > num_vals):
+                    raise Exception("Invalid key range")
+            else:
+                debug_print("indices:", indices)
+                debug_print("type(indices):", type(indices))
+                raise Exception("Invalid indices type")
+        if type(key) is int:
+            debug_print("key is int")
+            num_indices = 1
+            if (key < 0) or (key > num_vals):
+                raise Exception("Invalid key range")
+        if type(key) is slice:
+            debug_print("key is slice")
+            num_indices = (key.stop - key.start) // key.step
+            if (key.start < 0) or (key.stop > num_vals):
+                raise Exception("Invalid key range")
+        debug_print("made it past key range")
+        if num_indices == 0:
             raise Exception("Invalid key range")
+        if num_indices != len(value):
+            raise Exception("Invalid value length")
         # Flatten the incoming tensor value and ensure it is a numpy array of lesser or equal size
         if type(value) is not np.ndarray:
             value = np.array(value)
@@ -106,11 +142,10 @@ class Tensor:
             value = value.astype(self.dtype)
         except:
             raise Exception("Incompatible value dtype")
-        # Ensure the value is the same size as the key range
-        if len(value) != (key.stop - key.start):
-            raise Exception("Invalid value size")
         # Set the value
+        debug_print("setting value")
         self.value[key] = value
+        debug_print("set value")
 
     # Print string representation of the tensor
     def __str__(self):
@@ -274,31 +309,40 @@ class Tensor:
         return tuple(output_shape)
 
     @staticmethod
-    def get_output_type(x: "Tensor", y: "Tensor") -> Tuple[type, type]:
+    def get_output_data_type(x: "Tensor", y: "Tensor") -> np.dtype:
         # We want to determine the output type based on the input types
         # If the tensor types are not the same then take the higher type
         # List of known data types in order of precedence
-        debug_print("in get_output_type")
         known_data_types = [np.float64, np.uint8]
         data_type_1 = x.dtype
         data_type_2 = y.dtype
-        print("data_type_1:", data_type_1)
-        print("data_type_2:", data_type_2)
         for data_type in known_data_types:
             if data_type_1 == data_type:
-                return type(x), data_type
+                return data_type
             if data_type_2 == data_type:
-                return type(y), data_type
+                return data_type
         raise Exception("Unknown data type")
 
     @staticmethod
+    def get_output_tensor_type(x: "Tensor", y: "Tensor") -> type:
+        # We want to determine the output type based on the input types
+        # If the tensor types are not the same then take the higher type
+        # List of known data types in order of precedence
+        known_data_types = [np.float64, np.uint8]
+        data_type_1 = x.dtype
+        data_type_2 = y.dtype
+        for data_type in known_data_types:
+            if data_type_1 == data_type:
+                return type(x)
+            if data_type_2 == data_type:
+                return type(y)
+        raise Exception("Unknown tensor type")
+
+    @staticmethod
     def broadcast(x: "Tensor", y: "Tensor") -> Tuple["Tensor", "Tensor"]:
-        print("x:", x)
-        print("y:", y)
         # We want to broadcast the tensors
         # Get the number of dimensions
         output_shape = Tensor.get_output_shape(x, y)
-        print("output_shape:", output_shape)
         # Create the output tensors
         x_out = x.reshape(output_shape)
         y_out = y.reshape(output_shape)

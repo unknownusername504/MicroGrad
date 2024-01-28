@@ -1,11 +1,14 @@
 import time
-from typing import ClassVar
+from typing import ClassVar, Optional
 import multiprocessing
 import os
 import psutil
+import numpy as np
 from typing import List
 
 from micrograd.tensors.tensor import Tensor
+
+# from micrograd.tensors.tensor_u8 import TensorU8
 from micrograd.utils.debug_utils import debug_print
 
 
@@ -23,7 +26,7 @@ class WaveProcessJob:
         self.args = args
 
 
-class AcquireCoreThreadAffinity:
+class CoreThreadAffinityManager:
     # Leave one core free for the main process
     num_cores: ClassVar[int] = multiprocessing.cpu_count() - 1
     num_hyperthreads: ClassVar[int] = 2
@@ -47,14 +50,18 @@ class AcquireCoreThreadAffinity:
     def __init__(self):
         self.core_thread_id = None
 
-    def __enter__(self):
-        self.core_thread_id = self.lock_core_thread_affinity()
+    def __enter__(self, core_thread_id: Optional[int] = None):
+        if core_thread_id is not None:
+            self.core_thread_id = core_thread_id
+        else:
+            self.core_thread_id = self.lock_core_thread_affinity()
+        CoreThreadAffinityManager.set_thread_affinity(self.core_thread_id)
         debug_print("enter core_thread_id:", self.core_thread_id)
 
     def __exit__(self, exc_type, exc_value, traceback):
         debug_print("exit core_thread_id:", self.core_thread_id)
         # Sleep for long enough to cause backup
-        time.sleep(1)
+        # time.sleep(1)
         self.unlock_core_thread_affinity(self.core_thread_id)
 
     def lock_core_thread_affinity(self):
@@ -72,10 +79,6 @@ class AcquireCoreThreadAffinity:
                         # Return the core id
                         with self.num_threads_free.get_lock():
                             self.num_threads_free.value -= 1
-                        # Get the current process
-                        proc_id = os.getpid()
-                        # Set the core affinity
-                        psutil.Process(proc_id).cpu_affinity([core_id])
                         # Below is for Linux
                         # os.sched_setaffinity(0, core_id)
                         debug_print("Locked core thread affinity...", flush=True)
@@ -92,15 +95,29 @@ class AcquireCoreThreadAffinity:
             self.core_thread_affinity_locks[core_thread_id].release()
         debug_print("Unlocked core thread affinity...", flush=True)
 
+    def get_core_thread_id(self):
+        return self.core_thread_id
+
+    @staticmethod
+    def set_thread_affinity(core_thread_id):
+        # Get the current process
+        proc_id = os.getpid()
+        # Set the core affinity
+        psutil.Process(proc_id).cpu_affinity([core_thread_id])
+
 
 class WaveProcessWorker(multiprocessing.Process):
     # Create the input and output queues
     input_queue: ClassVar[multiprocessing.Queue] = multiprocessing.Queue()
     output_queue: ClassVar[multiprocessing.Queue] = multiprocessing.Queue()
 
-    def __init__(self):
+    def __init__(self, wave_runner, core_thread_affinity_manager):
         super().__init__()
-        self.num_threads_unreserved = AcquireCoreThreadAffinity.num_threads_unreserved
+        self.wave_runner = wave_runner
+        self.core_thread_affinity_manager = core_thread_affinity_manager
+        self.num_threads_unreserved = (
+            core_thread_affinity_manager.num_threads_unreserved
+        )
         self.input_queue = WaveProcessWorker.input_queue
         self.output_queue = WaveProcessWorker.output_queue
 
@@ -116,24 +133,28 @@ class WaveProcessWorker(multiprocessing.Process):
         return result
 
     @staticmethod
-    def worker_thread(chunk):
+    def worker_thread(chunk, core_thread_id):
         try:
-            core_thread_affinity = AcquireCoreThreadAffinity()
-            debug_print("Calling function...", flush=True)
-            with core_thread_affinity:
-                # Call the function
-                result = chunk()
-            debug_print("Called function...", flush=True)
-            debug_print("result:", result)
+            if not isinstance(chunk, Function):
+                raise Exception("Chunk is not a function")
+            if core_thread_id is None:
+                raise Exception("\n!!!Core thread affinity is not set!!!\n")
+            # CoreThreadAffinityManager.set_thread_affinity(core_thread_id)
+            debug_print("\nCalling function...", flush=True)
+            debug_print("chunk x:", chunk.inputs[0])
+            debug_print("chunk y:", chunk.inputs[1])
+            # Call the function
+            result = chunk()
+            debug_print("chunk result:", result)
+            debug_print("Called function...\n", flush=True)
         except Exception as e:
             result = e
         return result
 
     @staticmethod
-    def test_result(result):
-        # Simple test function that will add 1 to the result
-        # debug_print("Testing result...", flush=True)
-        return result + 1
+    def test_result():
+        expected_z = Tensor((2, 2), np.array([[6, 8], [10, 12]]))
+        return expected_z
 
     def create_pool(self, chunks: List):
         debug_print("Creating pool...")
@@ -144,31 +165,43 @@ class WaveProcessWorker(multiprocessing.Process):
             # Set the core affinity every two threads
             threads_spawned = 0
             debug_print("Spawning threads...")
-            for chunk in chunks:
-                debug_print("chunk:", chunk)
-                # Schedule the job to the wave process worker
-                test_only = False
-                if test_only:
-                    processes.append(
-                        pool.apply_async(
-                            WaveProcessWorker.test_result,
-                            args=(1,),
-                        )
+            locked_core_thread_ids = []
+            test_only = False
+            if test_only:
+                processes.append(
+                    pool.apply_async(
+                        WaveProcessWorker.test_result,
+                        args=(),
                     )
-                else:
+                )
+            else:
+                for chunk in chunks:
+                    debug_print("chunk:", chunk)
+                    # Schedule the job to the wave process worker
+                    core_thread_id = (
+                        self.core_thread_affinity_manager.lock_core_thread_affinity()
+                    )
+                    locked_core_thread_ids.append(core_thread_id)
                     processes.append(
                         pool.apply_async(
                             WaveProcessWorker.worker_thread,
-                            args=(chunk,),
+                            args=(
+                                chunk,
+                                core_thread_id,
+                            ),
                         )
                     )
-                threads_spawned += 1
-                debug_print("threads_spawned:", threads_spawned)
+                    threads_spawned += 1
+                    debug_print("threads_spawned:", threads_spawned)
         finally:
             debug_print("Closing pool...")
             pool.close()
             debug_print("Joining pool...")
             pool.join()
+            for core_thread_id in locked_core_thread_ids:
+                self.core_thread_affinity_manager.unlock_core_thread_affinity(
+                    core_thread_id
+                )
             debug_print("Collecting pool...")
             results = []
             debug_print("type(processes):", type(processes))
@@ -193,14 +226,13 @@ class WaveProcessWorker(multiprocessing.Process):
                 continue
             debug_print("Wave process worker processing...")
             input = self.input_queue.get()
-            output = self.process(input, max_reduce=10)
+            output = self.process(input)
+            debug_print("output:", output)
             debug_print("Wave process worker processed")
             self.output_queue.put(output)
 
-    def process(self, input, max_reduce=10):
+    def process(self, input):
         try:
-            if max_reduce <= 0:
-                raise Exception("Max reduce exceeded")
             # Process the operation on the wave process worker
             # Chunk the data by calling the function's chunk method
             args = input.args
@@ -217,21 +249,18 @@ class WaveProcessWorker(multiprocessing.Process):
                 self.num_threads_unreserved.value += num_threads_unreserved - len(
                     chunks
                 )
+            results = self.wave_process(chunks)
+            # Check if the results are exceptions
+            for result in results:
+                if isinstance(result, Exception):
+                    raise result
             # Perform the operation on the chunks
             debug_print("Performing reduce on chunks...")
-            results = input.func.reduce(self.wave_process(chunks), input.func.output)
-            debug_print("results:", results)
-            # Reduce the results by calling the function's reduce method
-            # This will return another wave process job
-            if len(results) > 1:
-                debug_print("Results require reduce")
-                # Process the output again, recursively. Reduce the results until there is only one result.
-                output = self.process(output, max_reduce=max_reduce - 1)
-            elif len(results) == 1:
-                output = results[0]
-            else:
-                output = WaveProcessOutputNone()
+            input.func.reduce(results, input.func.output)
+            output = input.func.output
+            debug_print("output:", output)
         except Exception as e:
+            debug_print("Exception occurred during wave process:", e)
             output = e
         return output
 
@@ -241,13 +270,13 @@ class WaveProcessWorker(multiprocessing.Process):
 
 class WaveProcess:
     def __init__(self):
-        # Create the wave process worker
-        self.worker = WaveProcessWorker()
+        self.worker = None
 
-    def start(self, debug=False):
+    def start(self, wave_runner, core_thread_affinity_manager):
+        # Create the wave process worker
+        self.worker = WaveProcessWorker(wave_runner, core_thread_affinity_manager)
         # Start the wave process worker
-        if debug:
-            debug_print("Starting wave process worker...")
+        debug_print("Starting wave process worker...")
         self.worker.start()
         # Wait for the wave process worker to start
         max_wait = 10
@@ -258,15 +287,15 @@ class WaveProcess:
         if max_wait <= 0:
             raise Exception("Max wait exceeded")
 
-    def terminate(self, debug=False):
+    def terminate(self):
         # Terminate the wave process worker
-        if debug:
-            debug_print("Terminating wave process worker...")
+        debug_print("Terminating wave process worker...")
         self.worker.terminate()
 
-    def schedule(self, func, *args):
+    def schedule(self, func):
+        inputs = func.inputs
         # Schedule the job to the wave process worker
-        self.worker.enqueue(WaveProcessJob(func, args))
+        self.worker.enqueue(WaveProcessJob(func, inputs))
 
     def get_result(self, timeout=10):
         # Get the result from the wave process worker
@@ -275,57 +304,15 @@ class WaveProcess:
     def __del__(self):
         # Terminate the wave process worker
         self.worker.terminate()
-
-
-class WaveRunner:
-    wave_process: ClassVar[WaveProcess] = WaveProcess()
-    active_runners: ClassVar[multiprocessing.Value] = multiprocessing.Value("i", 0)
-
-    def __init__(self, debug=False):
-        self.debug = debug
-        self.wave_process = WaveRunner.wave_process
-        self.active_runners = WaveRunner.active_runners
-
-    def __enter__(self):
-        # Start the wave process
-        with self.active_runners.get_lock():
-            if self.active_runners.value == 0:
-                self.wave_process.start(debug=self.debug)
-            self.active_runners.value += 1
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        with self.active_runners.get_lock():
-            self.active_runners.value -= 1
-            if self.active_runners.value == 0:
-                # Terminate the wave process
-                self.wave_process.terminate(debug=self.debug)
-
-    @staticmethod
-    def process(*args):
-        # Check if the wave process is running
-        with WaveRunner.active_runners.get_lock():
-            if WaveRunner.active_runners.value == 0:
-                return Exception("Wave process is not running")
-        # Schedule the function to the wave process
-        WaveRunner.wave_process.schedule(*args)
-        # Get the result from the wave process
-        return WaveRunner.wave_process.get_result(timeout=2)
+        self.worker.join()
+        self.worker.close()
+        self.worker = None
 
 
 class Function:
-    def __init__(self, inputs: List[Tensor], output: Tensor):
+    def __init__(self, inputs: List[Tensor]):
         self.inputs = inputs
-        self.output = output
-
-    def process(self, *args):
-        result = WaveRunner.process(self, *args)
-        # Check if the result is exception
-        if isinstance(result, Exception):
-            raise result
-        if isinstance(result, WaveProcessOutputNone):
-            result = None
-        return result
+        self.output = None
 
     def forward(self):
         raise NotImplementedError
@@ -337,3 +324,44 @@ class Function:
         result = self.forward()
         self.backward()
         return result
+
+
+class WaveRunner:
+    wave_process: ClassVar[WaveProcess] = WaveProcess()
+    active_runners: ClassVar[multiprocessing.Value] = multiprocessing.Value("i", 0)
+    core_thread_affinity_manager: ClassVar[
+        CoreThreadAffinityManager
+    ] = CoreThreadAffinityManager()
+
+    def __init__(self):
+        self.wave_process = WaveRunner.wave_process
+        self.active_runners = WaveRunner.active_runners
+
+    def __enter__(self):
+        # Start the wave process
+        with self.active_runners.get_lock():
+            if self.active_runners.value == 0:
+                debug_print("Starting wave process...")
+                self.wave_process.start(self, WaveRunner.core_thread_affinity_manager)
+            self.active_runners.value += 1
+            debug_print("Active runners:", self.active_runners.value)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        with self.active_runners.get_lock():
+            self.active_runners.value -= 1
+            debug_print("Active runners:", self.active_runners.value)
+            if self.active_runners.value == 0:
+                debug_print("Terminating wave process...")
+                # Terminate the wave process
+                self.wave_process.terminate()
+
+    def send_function(self, function: Function):
+        # Check if the wave process is running
+        with self.active_runners.get_lock():
+            if self.active_runners.value == 0:
+                return Exception("Wave process is not running")
+        # Schedule the function to the wave process
+        self.wave_process.schedule(function)
+        # Get the result from the wave process
+        return self.wave_process.get_result(timeout=2)
