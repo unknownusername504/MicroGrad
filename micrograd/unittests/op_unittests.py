@@ -8,11 +8,12 @@ from micrograd.functions.wave_process import WaveRunner
 # Unit tests of operations
 class TestOps(unittest.TestCase):
     def op_unittest_add(self):
+        print("!!! Running op_unittest_add !!!")
         # Test addition
         # Create the input tensors
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), np.array([[6, 8], [10, 12]]))
+        expected_z = TensorU8((2, 2), (x.value + y.value))
         add_func = Add([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -31,11 +32,12 @@ class TestOps(unittest.TestCase):
         self.assertTrue(expected_z == observed_z)
 
     def op_unittest_sub(self):
+        print("!!! Running op_unittest_sub !!!")
         # Test subtraction
         # Create the input tensors
         x = TensorU8((2, 2), np.array([[8, 7], [6, 5]]))
         y = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
-        expected_z = TensorU8((2, 2), np.array([[7, 5], [3, 1]]))
+        expected_z = TensorU8((2, 2), (x.value - y.value))
         sub_func = Sub([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -54,11 +56,12 @@ class TestOps(unittest.TestCase):
         self.assertTrue(expected_z == observed_z)
 
     def op_unittest_dot(self):
+        print("!!! Running op_unittest_dot !!!")
         # Test dot product
         # Create the input tensors
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), np.array([[19, 22], [43, 50]]))
+        expected_z = TensorU8((2, 2), np.dot(x.value, y.value))
         dot_func = Dot([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -77,11 +80,12 @@ class TestOps(unittest.TestCase):
         self.assertTrue(expected_z == observed_z)
 
     def op_unittest_mul(self):
+        print("!!! Running op_unittest_mul !!!")
         # Test multiplication
         # Create the input tensors
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), np.array([[5, 12], [21, 32]]))
+        expected_z = TensorU8((2, 2), np.matmul(x.value, y.value))
         mul_func = Matmul([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner

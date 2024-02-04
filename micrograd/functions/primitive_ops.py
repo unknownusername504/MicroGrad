@@ -47,7 +47,8 @@ class Add(Function):
         # Perform the addition
         output = x + y
         if not isinstance(output, np.ndarray):
-            output = np.array(output)
+            # Must be a scalar
+            output = np.array([output])
         debug_print("output:", output)
         return output
 
@@ -93,7 +94,8 @@ class Sub(Function):
         # Perform the subtraction
         output = x - y
         if not isinstance(output, np.ndarray):
-            output = np.array(output)
+            # Must be a scalar
+            output = np.array([output])
         debug_print("output:", output)
         return output
 
@@ -145,7 +147,8 @@ class Dot(Function):
         # Perform the dot product
         output = np.dot(x, y)
         if not isinstance(output, np.ndarray):
-            output = np.array(output)
+            # Must be a scalar
+            output = np.array([output])
         debug_print("output:", output)
         return output
 
@@ -197,6 +200,7 @@ class Matmul(Function):
         # Perform the matrix multiplication
         output = x @ y
         if not isinstance(output, np.ndarray):
-            output = np.array(output)
+            # Must be a scalar
+            output = np.array([output])
         debug_print("output:", output)
         return output
