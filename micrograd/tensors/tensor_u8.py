@@ -1,3 +1,4 @@
+from typing import List, Union
 import numpy as np
 from micrograd.functions.primitive_ops import Add, Sub, Dot, Matmul
 from micrograd.tensors.tensor import Tensor
@@ -6,15 +7,28 @@ from micrograd.tensors.tensor import Tensor
 # Class that implements a tensor of unsigned 8-bit integers
 # All operations are quantized and performed on the CPU
 class TensorU8(Tensor):
-    def __init__(self, shape, value: np.ndarray = None, requires_grad=False):
+    def __init__(
+        self,
+        shape,
+        value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
+    ):
         if value is None:
             value = np.zeros(shape, dtype=np.uint8)
         else:
-            # Check if the dtype is uint8
-            if value.dtype != np.uint8:
-                # Convert the value to uint8
-                value = value.astype(np.uint8)
-        super().__init__(shape=shape, value=value, requires_grad=requires_grad)
+            if not isinstance(value, np.ndarray):
+                if type(value) in [int, float, np.number]:
+                    value = np.array([value], dtype=np.uint8)
+                elif type(value) is List:
+                    value = np.array(value, dtype=np.uint8)
+                elif isinstance(value, Tensor):
+                    value = value.value
+                else:
+                    raise Exception("Invalid value type")
+        if value.shape != shape:
+            raise Exception("Value shape does not match tensor shape")
+        if value.dtype != np.uint8:
+            value = value.astype(np.uint8)
+        super().__init__(shape=shape, value=value)
 
     def __add__(self, other):
         if isinstance(other, TensorU8):

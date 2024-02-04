@@ -1,15 +1,30 @@
 from typing import List, Tuple, Union
 import numpy as np
+from typing import ClassVar
 
 from micrograd.utils.debug_utils import debug_print
 
 
 class Tensor:
+    # Class var to turn on/off gradient computation
+    # Should only be modified using the with_auto_grad context manager
+    auto_grad: ClassVar[bool] = False
+
+    class with_auto_grad:
+        def __init__(self, auto_grad: bool):
+            self.auto_grad = auto_grad
+            self.restore_auto_grad = Tensor.auto_grad
+
+        def __enter__(self):
+            Tensor.auto_grad = self.auto_grad
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            Tensor.auto_grad = self.restore_auto_grad
+
     def __init__(
         self,
         shape,
-        value: np.ndarray = None,
-        requires_grad=False,
+        value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
     ):
         self.shape = shape
         self.dtype = value.dtype if value is not None else np.float64
@@ -17,9 +32,21 @@ class Tensor:
         if value is None:
             self.value = np.zeros(shape, dtype=self.dtype)
         else:
+            if not isinstance(value, np.ndarray):
+                if type(value) in [int, float, np.number]:
+                    value = np.array([value])
+                elif type(value) is List:
+                    value = np.array(value)
+                elif isinstance(value, Tensor):
+                    value = value.value
+                else:
+                    raise Exception("Invalid value type")
             self.value = value
-        self.requires_grad = requires_grad
-        self.grad = None
+        if value.shape != shape:
+            raise Exception("Value shape does not match tensor shape")
+        if value.dtype != self.dtype:
+            value = value.astype(self.dtype)
+        self.grad = np.zeros(shape, dtype=self.dtype)
         self.grad_fn = None
         self.children = {}
         self.parents = {}
@@ -44,6 +71,7 @@ class Tensor:
 
     # Slice the tensor
     def __getitem__(self, key: Union[int, slice, Tuple[Union[int, slice]]]) -> "Tensor":
+        debug_print("self", self)
         debug_print("key:", key)
         num_vals = np.prod(self.shape)
         debug_print("val_len:", num_vals)

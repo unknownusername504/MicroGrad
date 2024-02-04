@@ -7,6 +7,7 @@ import numpy as np
 from typing import List
 
 from micrograd.tensors.tensor import Tensor
+from micrograd.functions.function import Function
 
 # from micrograd.tensors.tensor_u8 import TensorU8
 from micrograd.utils.debug_utils import debug_print
@@ -141,11 +142,11 @@ class WaveProcessWorker(multiprocessing.Process):
                 raise Exception("\n!!!Core thread affinity is not set!!!\n")
             # CoreThreadAffinityManager.set_thread_affinity(core_thread_id)
             debug_print("\nCalling function...", flush=True)
-            debug_print("chunk x:", chunk.inputs[0])
-            debug_print("chunk y:", chunk.inputs[1])
+            debug_print("chunk x:", chunk.inputs[0], flush=True)
+            debug_print("chunk y:", chunk.inputs[1], flush=True)
             # Call the function
             result = chunk()
-            debug_print("chunk result:", result)
+            debug_print("chunk result:", result, flush=True)
             debug_print("Called function...\n", flush=True)
         except Exception as e:
             result = e
@@ -242,7 +243,7 @@ class WaveProcessWorker(multiprocessing.Process):
                 # Take the free threads
                 self.num_threads_unreserved.value = 0
             debug_print("num_threads_unreserved:", num_threads_unreserved)
-            chunks = input.func.chunk(args, num_threads_unreserved)
+            chunks = input.func.chunk(args, num_threads_unreserved, type(input.func))
             debug_print("chunks:", chunks)
             # Add back unused threads
             with self.num_threads_unreserved.get_lock():
@@ -307,23 +308,6 @@ class WaveProcess:
         self.worker.join()
         self.worker.close()
         self.worker = None
-
-
-class Function:
-    def __init__(self, inputs: List[Tensor]):
-        self.inputs = inputs
-        self.output = None
-
-    def forward(self):
-        raise NotImplementedError
-
-    def backward(self):
-        raise NotImplementedError
-
-    def __call__(self):
-        result = self.forward()
-        self.backward()
-        return result
 
 
 class WaveRunner:
