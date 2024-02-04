@@ -6,7 +6,7 @@ from micrograd.tensors.tensor import Tensor
 # Class that implements a tensor of unsigned 8-bit integers
 # All operations are quantized and performed on the CPU
 class TensorU8(Tensor):
-    def __init__(self, shape, value=None, requires_grad=False):
+    def __init__(self, shape, value: np.ndarray = None, requires_grad=False):
         if value is None:
             value = np.zeros(shape, dtype=np.uint8)
         else:
@@ -18,17 +18,10 @@ class TensorU8(Tensor):
 
     def __add__(self, other):
         if isinstance(other, TensorU8):
-            # Create the output tensor
-            output = TensorU8(self.shape)
             # Create the add function
-            add = Add([self, other], output)
-            # Set the gradient function
-            self.grad_fn = add
-            other.grad_fn = add
-            # Call the forward function
-            add.forward()
+            add = Add([self, other])
             # Return the output tensor
-            return output
+            return add()
         else:
             return self.add(self, other)
 

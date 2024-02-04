@@ -227,7 +227,7 @@ class WaveProcessWorker(multiprocessing.Process):
             debug_print("Wave process worker processing...")
             input = self.input_queue.get()
             output = self.process(input)
-            debug_print("output:", output)
+            debug_print("Wave process worker output:", output)
             debug_print("Wave process worker processed")
             self.output_queue.put(output)
 

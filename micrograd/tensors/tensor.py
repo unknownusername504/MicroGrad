@@ -37,6 +37,11 @@ class Tensor:
     def tolist(self):
         return self.value.tolist()
 
+    # Function to test if the tensor is equal to another tensor
+    # Only checks the value
+    def __eq__(self, other: "Tensor") -> bool:
+        return np.array_equal(self.value, other.value)
+
     # Slice the tensor
     def __getitem__(self, key: Union[int, slice, Tuple[Union[int, slice]]]) -> "Tensor":
         debug_print("key:", key)
@@ -67,16 +72,12 @@ class Tensor:
         # Get the value
         value_slice = self.value[key]
         debug_print("value_slice:", value_slice)
-        if isinstance(value_slice, np.ndarray):
-            # Length of the slice
-            length = len(value_slice)
-        elif isinstance(value_slice, np.number):
-            # Length of the slice
-            length = 1
-        else:
-            debug_print("value_slice:", value_slice)
-            debug_print("type(value_slice):", type(value_slice))
-            raise Exception("Invalid value type")
+        if not isinstance(value_slice, np.ndarray):
+            debug_print("value_slice is not np.ndarray, must be a scalar")
+            value_slice = np.array([value_slice], dtype=self.dtype)
+        debug_print("value_slice:", value_slice)
+        # Length of the slice
+        length = len(value_slice)
         # Shape is now flattened
         shape_slice = (length,)
         # Create the tensor
@@ -131,11 +132,19 @@ class Tensor:
         debug_print("made it past key range")
         if num_indices == 0:
             raise Exception("Invalid key range")
+        debug_print("value:", value)
+        if isinstance(value, Tensor):
+            value = value.value
+        elif type(value) is List:
+            debug_print("value is list")
+            value = np.array(value)
+        elif type(value) in [np.number, int, float]:
+            debug_print("value is scalar")
+            value = np.array([value])
+        debug_print("value:", value)
         if num_indices != len(value):
             raise Exception("Invalid value length")
         # Flatten the incoming tensor value and ensure it is a numpy array of lesser or equal size
-        if type(value) is not np.ndarray:
-            value = np.array(value)
         value = value.flatten()
         # Ensure that the value is compatible with the tensor dtype with an attempt to cast
         try:

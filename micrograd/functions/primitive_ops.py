@@ -31,7 +31,7 @@ class Add(Function):
         debug_print("add x:", x)
         debug_print("add y:", y)
         # Perform the addition
-        output = x.value + y.value
+        output = x.get_value() + y.get_value()
         debug_print("output:", output)
         return output
 
@@ -85,19 +85,11 @@ class Add(Function):
                     # Get the chunk
                     arr = args[i]
                     debug_print("arr:", arr)
-                    num_dims = len(shape)
                     for k in range(this_chunk_size):
                         index = start + k
-                        remainder = index
-                        indices = []
-                        for l in range(num_dims):
-                            dim = shape[l]
-                            indices.append(remainder % dim)
-                            remainder //= dim
-                        indices = tuple(indices)
-                        debug_print("indices:", indices)
-                        chunk_value = arr[indices].get_value()
-                        chunk[k] = chunk_value
+                        unravel_index = np.unravel_index(index, shape)
+                        debug_print("unravel_index:", unravel_index)
+                        chunk[k] = arr[unravel_index].get_value()
                     debug_print("chunk before:", chunk)
                     chunk = output_tensor_type(
                         shape=(this_chunk_size,),
@@ -136,7 +128,8 @@ class Add(Function):
         for i in range(num_chunks):
             debug_print("chunk num:", i)
             # Get the chunk output
-            chunk_output = results[i].flatten()
+            chunk_output = results[i]
+            debug_print("chunk_output:", chunk_output)
             # Get the shape of the chunk_output
             shape = chunk_output.shape
             # Get the size of the chunk_output
@@ -144,12 +137,17 @@ class Add(Function):
             debug_print("chunk size:", size)
             if size == 0:
                 continue
-            indices = [index for index in range(output_index, output_index + size)]
-            output_tuple = np.unravel_index(indices, output_shape)
-            debug_print("output_tuple:", output_tuple)
-            # Assign the chunk_output to the output tensor
-            output[output_tuple] = chunk_output.value
-            # Increment the output index
+            elif len(output_shape) == 1:
+                # Assign the chunk_output to the output tensor
+                output[output_index : output_index + size] = chunk_output
+            else:
+                for index in range(output_index, output_index + size):
+                    debug_print("index:", index)
+                    output_tuple = np.unravel_index(index, output_shape)
+                    debug_print("output_tuple:", output_tuple)
+                    # Assign the chunk_output at index to the output tensor
+                    output[output_tuple] = chunk_output[index - output_index]
+            # Update the output_index
             output_index += size
         debug_print("output ending reduce:", output)
 
@@ -159,7 +157,9 @@ class Sub(Function):
         super().__init__(inputs, output)
 
     def forward(self):
-        self.output.value = self.sub(self.inputs[0].value, self.inputs[1].value)
+        self.output.value = self.sub(
+            self.inputs[0].get_value(), self.inputs[1].get_value()
+        )
 
     def backward(self):
         self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
@@ -171,14 +171,16 @@ class Dot(Function):
         super().__init__(inputs, output)
 
     def forward(self):
-        self.output.value = self.dot(self.inputs[0].value, self.inputs[1].value)
+        self.output.value = self.dot(
+            self.inputs[0].get_value(), self.inputs[1].get_value()
+        )
 
     def backward(self):
         self.inputs[0].grad = self.add(
-            self.inputs[0].grad, self.dot(self.inputs[1].value, self.output.grad)
+            self.inputs[0].grad, self.dot(self.inputs[1].get_value(), self.output.grad)
         )
         self.inputs[1].grad = self.add(
-            self.inputs[1].grad, self.dot(self.inputs[0].value, self.output.grad)
+            self.inputs[1].grad, self.dot(self.inputs[0].get_value(), self.output.grad)
         )
 
 
@@ -187,12 +189,16 @@ class Matmul(Function):
         super().__init__(inputs, output)
 
     def forward(self):
-        self.output.value = self.matmul(self.inputs[0].value, self.inputs[1].value)
+        self.output.value = self.matmul(
+            self.inputs[0].get_value(), self.inputs[1].get_value()
+        )
 
     def backward(self):
         self.inputs[0].grad = self.add(
-            self.inputs[0].grad, self.matmul(self.output.grad, self.inputs[1].value.T)
+            self.inputs[0].grad,
+            self.matmul(self.output.grad, self.inputs[1].get_value().T),
         )
         self.inputs[1].grad = self.add(
-            self.inputs[1].grad, self.matmul(self.inputs[0].value.T, self.output.grad)
+            self.inputs[1].grad,
+            self.matmul(self.inputs[0].get_value().T, self.output.grad),
         )
