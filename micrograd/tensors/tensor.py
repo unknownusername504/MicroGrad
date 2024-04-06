@@ -5,6 +5,24 @@ from typing import ClassVar
 from micrograd.utils.debug_utils import debug_print
 
 
+class Function:
+    def __init__(self, inputs: List["Tensor"]):
+        self.inputs = inputs
+        self.output = None
+
+    def forward(self):
+        raise NotImplementedError
+
+    def backward(self):
+        raise NotImplementedError
+
+    def __call__(self):
+        result = self.forward()
+        if Tensor.auto_grad:
+            self.backward()
+        return result
+
+
 class Tensor:
     # Class var to turn on/off gradient computation
     # Should only be modified using the with_auto_grad context manager
@@ -385,3 +403,322 @@ class Tensor:
         y_out = y.reshape(output_shape)
         # Return the output tensors
         return x_out, y_out
+
+    class Add(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            self.inputs[1].grad_fn = self
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.add(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
+                self.inputs[1].grad = self.add(self.inputs[1].grad, self.output.grad)
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def add(
+            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("add x:", x)
+            debug_print("add y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the addition
+            output = x + y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Sub(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            self.inputs[1].grad_fn = self
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.sub(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
+                self.inputs[1].grad = self.sub(self.inputs[1].grad, self.output.grad)
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def sub(
+            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("sub x:", x)
+            debug_print("sub y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the subtraction
+            output = x - y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Dot(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            self.inputs[1].grad_fn = self
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.dot(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.add(
+                    self.inputs[0].grad,
+                    self.dot(self.inputs[1].get_value(), self.output.grad),
+                )
+                self.inputs[1].grad = self.add(
+                    self.inputs[1].grad,
+                    self.dot(self.inputs[0].get_value(), self.output.grad),
+                )
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def dot(
+            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("dot x:", x)
+            debug_print("dot y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the dot product
+            output = np.dot(x, y)
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Matmul(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            self.inputs[1].grad_fn = self
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.matmul(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.add(
+                    self.inputs[0].grad,
+                    self.matmul(self.output.grad, self.inputs[1].get_value().T),
+                )
+                self.inputs[1].grad = self.add(
+                    self.inputs[1].grad,
+                    self.matmul(self.inputs[0].get_value().T, self.output.grad),
+                )
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def matmul(
+            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("matmul x:", x)
+            debug_print("matmul y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the matrix multiplication
+            output = x @ y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Div(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            self.inputs[1].grad_fn = self
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.div(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.add(
+                    self.inputs[0].grad,
+                    self.div(self.output.grad, self.inputs[1].get_value()),
+                )
+                self.inputs[1].grad = self.add(
+                    self.inputs[1].grad,
+                    self.div(self.inputs[0].get_value(), self.inputs[1].get_value())
+                    * -1
+                    * self.output.grad,
+                )
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def div(
+            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("div x:", x)
+            debug_print("div y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the division
+            output = x / y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Neg(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            self.inputs[0].grad_fn = self
+            x = self.inputs[0]
+            output_tensor_type = Tensor.get_output_tensor_type(x)
+            output_shape = Tensor.get_output_shape(x)
+            self.output = output_tensor_type(shape=output_shape)
+            self.output.grad_fn = self
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def forward(self):
+            self.output.value = self.neg(self.inputs[0].get_value())
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = self.neg(self.output.grad)
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        def neg(self, x: Union["Tensor", np.ndarray]) -> np.ndarray:
+            debug_print("neg x:", x)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            # Perform the negation
+            output = -x
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    def __add__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Add([self, other])()
+
+    def __radd__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Add([other, self])()
+
+    def __sub__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Sub([self, other])()
+
+    def __rsub__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Sub([other, self])()
+
+    def __mul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Dot([self, other])()
+
+    def __rmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Dot([other, self])()
+
+    def __truediv__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Div([self, other])()
+
+    def __rtruediv__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Div([other, self])()
+
+    def __matmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Matmul([self, other])()
+
+    def __rmatmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
+        return Tensor.Matmul([other, self])()
+
+    def __neg__(self) -> "Tensor":
+        return Tensor.Neg([self])()

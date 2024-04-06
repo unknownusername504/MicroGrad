@@ -1,7 +1,6 @@
 import numpy as np
 
-from micrograd.functions.wave_process import Function
-from micrograd.functions.primitive_ops import Add, Sub, Dot, Matmul
+from micrograd.tensors.tensor import Function
 
 
 class Sigmoid(Function):
@@ -12,9 +11,8 @@ class Sigmoid(Function):
         self.output.value = self.sigmoid(self.inputs[0].value)
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.mul(self.output.value, self.sub(1, self.output.value)),
+        self.inputs[0].grad = self.inputs[0].grad - (
+            self.output.value @ self.output.value
         )
 
     def sigmoid(self, x):
@@ -29,9 +27,7 @@ class ReLU(Function):
         self.output.value = self.relu(self.inputs[0].value)
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad, self.relu_grad(self.inputs[0].value)
-        )
+        self.inputs[0].grad = self.inputs[0].grad + self.relu_grad(self.inputs[0].value)
 
     def relu(self, x):
         return np.maximum(x, 0)
@@ -48,8 +44,8 @@ class Softmax(Function):
         self.output.value = self.softmax(self.inputs[0].value)
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad, self.softmax_grad(self.output.value, self.output.grad)
+        self.inputs[0].grad = self.inputs[0].grad + self.softmax_grad(
+            self.output.value, self.output.grad
         )
 
     def softmax(self, x):
@@ -70,17 +66,11 @@ class CrossEntropy(Function):
         )
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.cross_entropy_grad(
-                self.inputs[0].value, self.inputs[1].value, self.output.grad
-            ),
+        self.inputs[0].grad = self.inputs[0].grad + self.cross_entropy_grad(
+            self.inputs[0].value, self.inputs[1].value, self.output.grad
         )
-        self.inputs[1].grad = self.add(
-            self.inputs[1].grad,
-            self.cross_entropy_grad(
-                self.inputs[1].value, self.inputs[0].value, self.output.grad
-            ),
+        self.inputs[1].grad = self.inputs[1].grad + self.cross_entropy_grad(
+            self.inputs[1].value, self.inputs[0].value, self.output.grad
         )
 
     def cross_entropy(self, y, t):
@@ -102,25 +92,19 @@ class Conv2D(Function):
         )
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.conv2d_grad(
-                self.inputs[0].value,
-                self.inputs[1].value,
-                self.output.grad,
-                self.stride,
-                self.padding,
-            ),
+        self.inputs[0].grad = self.inputs[0].grad + self.conv2d_grad(
+            self.inputs[0].value,
+            self.inputs[1].value,
+            self.output.grad,
+            self.stride,
+            self.padding,
         )
-        self.inputs[1].grad = self.add(
-            self.inputs[1].grad,
-            self.conv2d_grad(
-                self.inputs[1].value,
-                self.inputs[0].value,
-                self.output.grad,
-                self.stride,
-                self.padding,
-            ),
+        self.inputs[1].grad = self.inputs[1].grad + self.conv2d_grad(
+            self.inputs[1].value,
+            self.inputs[0].value,
+            self.output.grad,
+            self.stride,
+            self.padding,
         )
 
     def conv2d(self, x, w, stride, padding):
@@ -190,15 +174,12 @@ class MaxPool2D(Function):
         )
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.max_pool2d_grad(
-                self.inputs[0].value,
-                self.output.value,
-                self.output.grad,
-                self.stride,
-                self.padding,
-            ),
+        self.inputs[0].grad = self.inputs[0].grad + self.max_pool2d_grad(
+            self.inputs[0].value,
+            self.output.value,
+            self.output.grad,
+            self.stride,
+            self.padding,
         )
 
     def max_pool2d(self, x, stride, padding):
@@ -277,11 +258,8 @@ class AvgPool2D(Function):
         )
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.avg_pool2d_grad(
-                self.inputs[0].value, self.output.grad, self.stride, self.padding
-            ),
+        self.inputs[0].grad = self.inputs[0].grad + self.avg_pool2d_grad(
+            self.inputs[0].value, self.output.grad, self.stride, self.padding
         )
 
     def avg_pool2d(self, x, stride, padding):
@@ -346,9 +324,8 @@ class Flatten(Function):
         self.output.value = self.flatten(self.inputs[0].value)
 
     def backward(self):
-        self.inputs[0].grad = self.add(
-            self.inputs[0].grad,
-            self.reshape(self.output.grad, self.inputs[0].value.shape),
+        self.inputs[0].grad = self.inputs[0].grad + self.reshape(
+            self.output.grad, self.inputs[0].value.shape
         )
 
     def flatten(self, x):

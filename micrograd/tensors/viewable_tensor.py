@@ -1,12 +1,263 @@
 # Class for viewing non contiguous tensor slices without copying
 
 import copy
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import unittest
 
 import numpy as np
 from micrograd.tensors.tensor import Tensor
 from micrograd.utils.debug_utils import debug_print
+
+
+class View:
+    # TODO: Add a tile_skip_by so that tiles don't have to be contiguous
+    # NOTE: Number of steps is a little odd as the first element is step 1 as in you took your first step into the view
+    def __init__(
+        self, start: int, num_steps: int, step_size: int = 1, num_tiles: int = 1
+    ):
+        assert start >= 0
+        assert num_steps > 0
+        assert step_size > 0
+        assert num_tiles > 0
+        # Convert complete tiling to a step size of 1 and take steps across the tiling instead
+        if (num_tiles > 1) and (num_tiles == step_size):
+            num_steps *= step_size
+            num_tiles = 1
+            step_size = 1
+        assert (
+            num_tiles < step_size
+        ) or step_size == 1, f"num_tiles={num_tiles} must be less than step_size={step_size} or step_size must be 1"
+        self.start = start
+        self.num_steps = num_steps
+        self.step_size = step_size
+        self.num_tiles = num_tiles
+
+    def __eq__(self, view):
+        return (
+            (self.start == view.start)
+            and (self.num_steps == view.num_steps)
+            and (self.step_size == view.step_size)
+            and (self.num_tiles == view.num_tiles)
+        )
+
+    def __neq__(self, view):
+        return not self.__eq__(view)
+
+    def __hash__(self):
+        return hash((self.start, self.num_steps, self.step_size, self.num_tiles))
+
+    def __str__(self):
+        return f"View(start={self.start}, num_steps={self.num_steps}, step_size={self.step_size}, num_tiles={self.num_tiles})"
+
+    def get_stop(self):
+        return self.start + ((self.num_steps - 1) * self.step_size)
+
+    def to_slices(self):
+        slices = []
+        for i in range(self.num_tiles):
+            start = self.start + i
+            # Slice stop is not inclusive of exact multiple of step_size
+            stop = self.get_stop() + self.step_size + i
+            slices.append(slice(start, stop, self.step_size))
+        return slices
+
+    @staticmethod
+    def merge_views(
+        view1: "View", view2: "View"
+    ) -> Union[Tuple["View"], Tuple["View", "View"]]:
+        if view1 == view2:
+            return tuple([view1])
+
+        if view1.start > view2.start:
+            view1, view2 = view2, view1
+        elif view1.start == view2.start:
+            if view2.get_stop() > view1.get_stop():
+                view1, view2 = view2, view1
+
+        stop_of_view1 = view1.get_stop()
+        stop_of_view2 = view2.get_stop()
+        is_view2_contained_in_view1 = (
+            (view2.start >= view1.start)
+            and (stop_of_view2 <= stop_of_view1)
+            and (view2.num_tiles <= view1.num_tiles)
+        )
+
+        # Numbers of tiles must be the same or all elements of the smaller tiling must be contained in the larger tiling
+        if view1.num_tiles != view2.num_tiles:
+            if not is_view2_contained_in_view1:
+                return tuple([view1, view2])
+
+        # If view2 is contained in view1 and
+        # step size of view2 is a multiple of step size of view1 (implying view2 granularity is <= view1) and
+        # and start of view2 is a multiple of step size of view1 from view1's start,
+        # then they are overlapping containment
+        # TODO: You can be overlapped if you don't exactly land on a step in view2 but land on a tile and satisfy shifted containment conditions
+        is_view2_overlapped_by_view1 = (
+            is_view2_contained_in_view1
+            and (view2.step_size % view1.step_size == 0)
+            and ((view1.start + view2.start) % view1.step_size == 0)
+        )
+
+        new_step_size = max(
+            view1.step_size if (view1.num_steps != 1) else 1,
+            view2.step_size if (view2.num_steps != 1) else 1,
+        )
+        assert (
+            (new_step_size == 1)
+            or (new_step_size == view1.step_size)
+            or (new_step_size == view2.step_size)
+        )
+        if view1.step_size != view2.step_size:
+            # 1 step can be transformed into any step size
+            if (view1.num_steps != 1) and (view2.num_steps != 1):
+                # Overlapping views can be merged
+                if not is_view2_overlapped_by_view1:
+                    return tuple([view1, view2])
+
+        max_step = min(
+            max(((stop_of_view2 - view1.start) // new_step_size), 1), view1.num_steps
+        )
+
+        # Go through every step in view1 and attempt to land on a step in view2 with the next step
+        # Also include 0 in case view2 is contained in view1 and they share the same start
+        for step in range(0 if is_view2_contained_in_view1 else 1, max_step):
+            this_step = view1.start + (step * new_step_size)
+            offset_in_view2 = this_step - view2.start
+            if offset_in_view2 < 0:
+                continue
+            assert offset_in_view2 <= stop_of_view2
+            if offset_in_view2 % view2.step_size == 0:
+                # Found a match
+                new_start = view1.start
+                new_stop = max(stop_of_view1, stop_of_view2)
+                assert new_stop >= new_start
+                assert (
+                    (new_stop - new_start) % new_step_size
+                ) == 0, f"({new_stop} - {new_start}) % {new_step_size} = {(new_stop - new_start) % new_step_size} for {view1} and {view2}"
+                new_num_steps = (
+                    (max(stop_of_view1, stop_of_view2) - new_start) // new_step_size
+                ) + 1
+                assert (new_num_steps > min(view1.num_steps, view2.num_steps)) and (
+                    new_num_steps <= (view1.num_steps + view2.num_steps)
+                ), f"{new_num_steps} would gain or lose elements from {view1} and {view2}"
+                new_num_tiles = view1.num_tiles
+                return (View(new_start, new_num_steps, new_step_size, new_num_tiles),)
+
+        return tuple([view1, view2])
+
+    def __add__(self, view):
+        return View.merge_views(self, view)
+
+    @staticmethod
+    def test():
+        # Create an array from 0 to 200
+        index_array = np.arange(200)
+        # rand_seed = int(time.time())
+        rand_seed = 1
+        np.random.seed(rand_seed)
+
+        """
+        # Test the view class
+        for _ in range(5):
+            start = np.random.randint(0, 10)
+            num_steps = np.random.randint(1, 10)
+            step_size = np.random.randint(1, 10)
+            if step_size > 2:
+                num_tiles = np.random.randint(1, step_size - 1)
+            else:
+                num_tiles = 1
+            view = View(start, num_steps, step_size, num_tiles)
+            debug_print(view)
+            slices = view.to_slices()
+            debug_print(slices)
+            # Print the values of the array that are selected by the slices
+            combined = []
+            for step in range(num_steps):
+                for tile in range(num_tiles):
+                    combined.append(index_array[slices[tile]][step])
+            debug_print(combined)
+        """
+
+        # Test merging with views
+        test_tiling_merge = False
+        found_merges = set()
+        for _ in range(500):
+            view1_params = {
+                "start": np.random.randint(0, 10),
+                "num_steps": np.random.randint(1, 10),
+                "step_size": np.random.randint(1, 10),
+            }
+            if test_tiling_merge and (view1_params["step_size"] > 2):
+                view1_params["num_tiles"] = np.random.randint(
+                    1, view1_params["step_size"] - 1
+                )
+            else:
+                view1_params["num_tiles"] = 1
+            view2_params = {
+                "start": np.random.randint(0, 10),
+                "num_steps": np.random.randint(1, 10),
+                "step_size": np.random.randint(1, 10),
+            }
+            if test_tiling_merge and (view2_params["step_size"] > 2):
+                view2_params["num_tiles"] = np.random.randint(
+                    1, view2_params["step_size"] - 1
+                )
+            else:
+                view2_params["num_tiles"] = 1
+
+            view1 = View(**view1_params)
+            view2 = View(**view2_params)
+            try:
+                debug_print("view1: {}".format(view1))
+                debug_print("view2: {}".format(view2))
+                merged_views = view1 + view2
+                for i, merged_view in enumerate(merged_views):
+                    debug_print("merged_view{}: {}".format(i, merged_view))
+                assert (len(merged_views) > 0) and (len(merged_views) <= 2)
+                if len(merged_views) == 1:
+                    debug_print("!!! Merged views !!!")
+                    found_merges.add((view1, view2))
+
+                combined_unmerged = []
+                combined_merged = []
+
+                view1_slices = view1.to_slices()
+                for step in range(view1.num_steps):
+                    for tile in range(view1.num_tiles):
+                        combined_unmerged.append(index_array[view1_slices[tile]][step])
+                view2_slices = view2.to_slices()
+                for step in range(view2.num_steps):
+                    for tile in range(view2.num_tiles):
+                        combined_unmerged.append(index_array[view2_slices[tile]][step])
+                # Sort and remove duplicates
+                combined_unmerged = list(set(combined_unmerged))
+                combined_unmerged.sort()
+                # print(combined_unmerged)
+
+                for merged_view in merged_views:
+                    merged_slices = merged_view.to_slices()
+                    for step in range(merged_view.num_steps):
+                        for tile in range(merged_view.num_tiles):
+                            combined_merged.append(
+                                index_array[merged_slices[tile]][step]
+                            )
+                # Sort and remove duplicates
+                combined_merged = list(set(combined_merged))
+                combined_merged.sort()
+                # print(combined_merged)
+                assert (
+                    combined_unmerged == combined_merged
+                ), f"combined_unmerged: {combined_unmerged} != combined_merged: {combined_merged}"
+            except AssertionError as e:
+                print(f"Failed with view1: {view1}, view2: {view2}")
+                raise e
+        # Save the known merges to a file for later testing
+        print(f"Found {len(found_merges)} merges")
+        with open("known_merges.txt", "w") as f:
+            f.write("[")
+            for view1, view2 in found_merges:
+                f.write(f"({view1},{view2}),")
+            f.write("]")
 
 
 class ViewableTensor(Tensor):
@@ -40,6 +291,10 @@ class ViewableTensor(Tensor):
 
         # Track shallow copies as a list
         self.shallow_copies = []
+
+    @staticmethod
+    def view_from_slice(slice: slice) -> View:
+        return View(slice.start, (slice.stop - slice.start) // slice.step, slice.step)
 
     def set_allow_shallow_copy(self, allow_shallow_copy: bool):
         self.allow_shallow_copy = allow_shallow_copy

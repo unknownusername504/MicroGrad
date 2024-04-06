@@ -1,8 +1,8 @@
 import unittest
 import numpy as np
-from micrograd.functions.primitive_ops import Add, Sub, Dot, Matmul
+from micrograd.tensors.tensor import Tensor
 from micrograd.tensors.tensor_u8 import TensorU8
-from micrograd.functions.wave_process import WaveRunner
+from micrograd.scheduler.schedule import WaveRunner
 
 
 # Unit tests of operations
@@ -14,7 +14,7 @@ class TestOps(unittest.TestCase):
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
         expected_z = TensorU8((2, 2), (x.value + y.value))
-        add_func = Add([x, y])
+        add_func = Tensor.Add([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
             try:
@@ -23,7 +23,7 @@ class TestOps(unittest.TestCase):
                 self.fail(f"Exception occurred: {e}")
         # observed_z = add_func.output
         # Print the result
-        print("Addition result:")
+        print("Tensor.Addition result:")
         print("Expected:")
         print(expected_z)
         print("Observed:")
@@ -38,7 +38,7 @@ class TestOps(unittest.TestCase):
         x = TensorU8((2, 2), np.array([[8, 7], [6, 5]]))
         y = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         expected_z = TensorU8((2, 2), (x.value - y.value))
-        sub_func = Sub([x, y])
+        sub_func = Tensor.Sub([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
             try:
@@ -47,7 +47,7 @@ class TestOps(unittest.TestCase):
                 self.fail(f"Exception occurred: {e}")
         # observed_z = sub_func.output
         # Print the result
-        print("Subtraction result:")
+        print("Tensor.Subtraction result:")
         print("Expected:")
         print(expected_z)
         print("Observed:")
@@ -62,7 +62,7 @@ class TestOps(unittest.TestCase):
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
         expected_z = TensorU8((2, 2), np.dot(x.value, y.value))
-        dot_func = Dot([x, y])
+        dot_func = Tensor.Dot([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
             try:
@@ -71,7 +71,7 @@ class TestOps(unittest.TestCase):
                 self.fail(f"Exception occurred: {e}")
         # observed_z = dot_func.output
         # Print the result
-        print("Dot product result:")
+        print("Tensor.Dot product result:")
         print("Expected:")
         print(expected_z)
         print("Observed:")
@@ -86,7 +86,7 @@ class TestOps(unittest.TestCase):
         x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
         y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
         expected_z = TensorU8((2, 2), np.matmul(x.value, y.value))
-        mul_func = Matmul([x, y])
+        mul_func = Tensor.Matmul([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
             try:

@@ -12,6 +12,7 @@ setup(
         "micrograd.optimizers",
         "micrograd.functions",
         "micrograd.utils",
+        "micrograd.scheduler",
     ],
     install_requires=[
         "numpy",
