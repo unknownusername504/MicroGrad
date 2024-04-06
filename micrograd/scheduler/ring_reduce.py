@@ -301,7 +301,7 @@ class EmuMultiWorker:
         this_worker_queue["output_queue"].put(data)
         process = multiprocessing.Process(
             target=self.worker,
-            args=(operation, this_worker_queue, DebugPrint.debug_mode),
+            args=(operation, this_worker_queue, DebugPrint.debug),
         )
         self.processes.append(process)
 
@@ -318,10 +318,9 @@ class EmuMultiWorker:
             process.terminate()
 
     @staticmethod
-    def worker(operation: Operation, worker_queue, debug_mode):
+    def worker(operation: Operation, worker_queue, debug):
         # Carry over the debug mode to the process since it's not shared
-        if debug_mode:
-            DebugPrint.set_debug(True)
+        DebugPrint.set_debug(debug)
         # debug_print(f"Worker {multiprocessing.current_process().name} started")
         input_queue: multiprocessing.Queue = worker_queue["input_queue"]
         output_queue: multiprocessing.Queue = worker_queue["output_queue"]
