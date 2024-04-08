@@ -10,6 +10,7 @@ class TensorU8(Tensor):
         self,
         shape,
         value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
+        requires_grad: bool = False,
     ):
         if value is None:
             value = np.zeros(shape, dtype=np.uint8)
@@ -27,4 +28,4 @@ class TensorU8(Tensor):
             raise Exception("Value shape does not match tensor shape")
         if value.dtype != np.uint8:
             value = value.astype(np.uint8)
-        super().__init__(shape=shape, value=value)
+        super().__init__(shape=shape, value=value, requires_grad=requires_grad)

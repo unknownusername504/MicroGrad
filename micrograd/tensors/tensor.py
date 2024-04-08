@@ -43,6 +43,7 @@ class Tensor:
         self,
         shape,
         value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
+        requires_grad: bool = True,
     ):
         self.shape = shape
         self.dtype = value.dtype if value is not None else np.float64
@@ -64,8 +65,10 @@ class Tensor:
             raise Exception("Value shape does not match tensor shape")
         if value.dtype != self.dtype:
             value = value.astype(self.dtype)
-        self.grad = np.zeros(shape, dtype=self.dtype)
-        self.grad_fn = None
+        self.requires_grad = requires_grad
+        if self.requires_grad:
+            self.grad = np.zeros(shape, dtype=self.dtype)
+            self.grad_fn = None
         self.children = {}
         self.parents = {}
 
