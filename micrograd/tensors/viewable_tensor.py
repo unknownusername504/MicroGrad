@@ -91,12 +91,14 @@ class View:
 
     @staticmethod
     def merge_views(
-        view1: "View", view2: "View"
+        view1: "View", view2: "View", allow_reorder: bool = True
     ) -> Union[Tuple["View"], Tuple["View", "View"]]:
         if view1 == view2:
             return tuple([view1])
 
         if view1.start > view2.start:
+            if not allow_reorder:
+                return tuple([view1, view2])
             view1, view2 = view2, view1
         elif view1.start == view2.start:
             if view2.get_stop() > view1.get_stop():
@@ -143,8 +145,9 @@ class View:
                     return tuple([view1, view2])
 
         max_step = min(
-            max(((stop_of_view2 - view1.start) // new_step_stride), 1), view1.num_steps
+            ((stop_of_view2 - view1.start) // new_step_stride) + 1, view1.num_steps + 1
         )
+        assert max_step >= 1
 
         # Go through every step in view1 and attempt to land on a step in view2 with the next step
         # Also include 0 in case view2 is contained in view1 and they share the same start
@@ -380,16 +383,13 @@ class ViewableTensor(Tensor):
         while merge_index_outer < len(views):
             if not view_is_merged[merge_index_outer]:
                 view = views[merge_index_outer]
-                for merge_index_inner, other_view in enumerate(
-                    views[merge_index_outer + 1 :]
-                ):
-                    merged = View.merge_views(view, other_view)
+                view_is_merged[merge_index_outer] = 1
+                for i, other_view in enumerate(views[merge_index_outer + 1 :]):
+                    merge_index_inner = merge_index_outer + 1 + i
+                    merged = View.merge_views(view, other_view, allow_reorder=False)
                     if len(merged) == 1:
-                        print(f"Merged views: {view} and {other_view} into {merged[0]}")
                         view = merged[0]
-                        view_is_merged[merge_index_outer + merge_index_inner] = 1
-                    else:
-                        print(f"Failed to merge views: {view} and {other_view}")
+                        view_is_merged[merge_index_inner] = 1
                 merged_views.append(view)
             merge_index_outer += 1
         self.views = merged_views
@@ -694,63 +694,18 @@ class TestViewableTensor(unittest.TestCase):
                 viewable_tensor.views,
                 [View(start=2, num_steps=2), View(start=0, num_steps=2)],
             )
+
             viewable_tensor.set_views(
                 [
                     View(start=0, num_steps=4),
                 ]
             )
             self.assertEqual(viewable_tensor.views, [View(start=0, num_steps=4)])
+
             viewable_tensor.merge_views()
             self.assertEqual(viewable_tensor.views, [View(start=0, num_steps=4)])
         except Exception as e:
             self.fail("Exception raised while testing merge_views method: " + str(e))
-
-        # Method to test random view combinations against a test array
-        def test_merge_views(viewable_tensor: ViewableTensor, views: List[View]):
-            # Save a deepcopy of the input array
-            arr = viewable_tensor.value.tolist()
-            # Save the original views
-            original_views = views[:]
-            # Combine the views
-            viewable_tensor.set_views(views)
-            # Extract the views
-            views = viewable_tensor.views
-            # Use the views to get the value
-            value_arr = []
-            for this_view in views:
-                this_slices = this_view.to_slices()
-                for this_slice in this_slices:
-                    value_arr += arr[this_slice]
-            original_value_arr = []
-            for this_view in original_views:
-                this_slices = this_view.to_slices()
-                for this_slice in this_slices:
-                    original_value_arr += arr[this_slice]
-            # Ensure the underlying array is not modified
-            self.assertEqual(viewable_tensor.value.tolist(), arr)
-            # Test the value
-            self.assertEqual(value_arr, original_value_arr)
-
-        try:
-            # Test the merge_views method
-            print("Testing random view combinations for merge_views method...")
-            test_num = 100
-            this_test_num = 0
-            random_views = None
-            for _ in range(test_num):
-                this_test_num += 1
-                random_view_1 = View.random_view(len(test_arr))
-                random_view_2 = View.random_view(len(test_arr))
-                random_views = [random_view_1, random_view_2]
-                test_merge_views(viewable_tensor, random_views)
-            print("Finished testing random view combinations")
-        except Exception as e:
-            self.fail(
-                "Exception raised while testing at test num ({}) merge_views method with views({}): ".format(
-                    this_test_num, random_views
-                )
-                + str(e)
-            )
 
         # Reset the viewable tensor views
         viewable_tensor.set_views(
@@ -770,4 +725,5 @@ def unittest_viewable_tensor():
 
 
 if __name__ == "__main__":
+    View.test()
     unittest_viewable_tensor()
