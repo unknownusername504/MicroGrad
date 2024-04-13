@@ -15,6 +15,9 @@ if not exist .venv (
     python -m venv .venv
 )
 
+rem Activate the virtual environment
+call .venv\Scripts\activate
+
 rem Echo that we are installing the package
 echo Installing the package
 
@@ -61,9 +64,6 @@ if "%hash%" neq "" (
 )
 
 :install
-
-rem Activate the virtual environment
-call .venv\Scripts\activate
 
 rem Install the build module
 python -m pip install build

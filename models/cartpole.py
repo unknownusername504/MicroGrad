@@ -5,14 +5,15 @@ import numpy as np
 import gym
 from collections import deque
 import random
+import matplotlib.pyplot as plt
 
 from micrograd.tensors.tensor import Tensor
 
 from micrograd.functions.loss.crossentropy import CrossEntropyLoss
 from micrograd.functions.optimizers.adam import AdamOptim
 
-from micrograd.functions.activations.relu import ReLU
-from micrograd.functions.activations.softmax import Softmax
+from micrograd.layers.activations.relu import ReLU
+from micrograd.layers.activations.softmax import Softmax
 
 
 class ReplayBuffer:
@@ -83,24 +84,24 @@ class CartPole:
                 return np.argmax(self.model(state))
 
     def __init__(self):
-        self.env = gym.make("CartPole-v1")
-        self.env.reset()
-        self.done = False
+        self.env = gym.make("CartPole-v1", render_mode="rgb_array")
+        self.reset_env()
         self.model = CartPole.Model(4, 128, 2, self.env.action_space)
         self.optimizer = AdamOptim(self.model.get_parameters())
-        self.loss = CrossEntropyLoss()
-        self.reward = 0
+        self.loss = lambda y_pred, y_true: CrossEntropyLoss(y_pred, y_true)()
         self.policy = CartPole.ProximalPolicy(self.model)
         self.gamma = 0.99
         self.test_episodes = 10
-        self.state = self.env.reset()
-        self.next_state = self.state
 
     def render(self):
-        self.env.render()
+        frame = self.env.render()
+        plt.imshow(frame)
+        plt.show()
 
-    def reset(self):
-        self.env.reset()
+    def reset_env(self):
+        observation, _ = self.env.reset()
+        self.reward = 0
+        self.state = Tensor(observation)
         self.done = False
 
     def close(self):
@@ -108,8 +109,11 @@ class CartPole:
 
     def step(self, action):
         if self.done:
-            self.reset()
-        _, _, self.done, _ = self.env.step(action)
+            self.reset_env()
+        observation, reward, terminated, truncated = self.env.step(action)
+        self.reward = reward
+        self.state = Tensor(observation)
+        self.done = terminated or truncated
         return self.done
 
     def choose_action(self):
@@ -117,7 +121,8 @@ class CartPole:
 
     def get_target(self):
         return Tensor(
-            self.reward + (self.gamma * self.model(self.next_state) * (1 - self.done))
+            self.reward
+            + (self.gamma * self.model(self.state).max().item() * (1 - self.done))
         )
 
     def update_model(self):
@@ -129,7 +134,7 @@ class CartPole:
         self.optimizer.step()
 
     def train(self, episodes):
-        self.reset()
+        self.reset_env()
         for _ in range(episodes):
             self.render()
             self.update_model()
@@ -138,7 +143,7 @@ class CartPole:
                 break
 
     def test(self):
-        self.reset()
+        self.reset_env()
         for _ in range(self.test_episodes):
             self.render()
             action = self.choose_action()

@@ -10,7 +10,7 @@ setup(
         "micrograd.unittests",
         "micrograd.layers",
         "micrograd.layers.activations",
-        "micrograd.layers.2d",
+        "micrograd.layers.twodims",
         "micrograd.functions",
         "micrograd.functions.loss",
         "micrograd.functions.optimizers",
@@ -21,6 +21,7 @@ setup(
         "numpy",
         "psutil",
         "gym",
+        "matplotlib",
     ],
     python_requires=">=3.8",
 )
