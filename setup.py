@@ -11,12 +11,16 @@ setup(
         "micrograd.layers",
         "micrograd.optimizers",
         "micrograd.functions",
+        "micrograd.functions.loss",
+        "micrograd.functions.optimizers",
+        "micrograd.functions.activations",
         "micrograd.utils",
         "micrograd.scheduler",
     ],
     install_requires=[
         "numpy",
         "psutil",
+        "gym",
     ],
     python_requires=">=3.8",
 )

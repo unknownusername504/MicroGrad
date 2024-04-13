@@ -3,95 +3,18 @@ import numpy as np
 from micrograd.tensors.tensor import Function
 
 
-class Sigmoid(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
-
-    def forward(self):
-        self.output.value = self.sigmoid(self.inputs[0].value)
-
-    def backward(self):
-        self.inputs[0].grad = self.inputs[0].grad - (
-            self.output.value @ self.output.value
-        )
-
-    def sigmoid(self, x):
-        return 1 / (1 + np.exp(-x))
-
-
-class ReLU(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
-
-    def forward(self):
-        self.output.value = self.relu(self.inputs[0].value)
-
-    def backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.relu_grad(self.inputs[0].value)
-
-    def relu(self, x):
-        return np.maximum(x, 0)
-
-    def relu_grad(self, x):
-        return np.where(x > 0, 1, 0)
-
-
-class Softmax(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
-
-    def forward(self):
-        self.output.value = self.softmax(self.inputs[0].value)
-
-    def backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.softmax_grad(
-            self.output.value, self.output.grad
-        )
-
-    def softmax(self, x):
-        exp = np.exp(x - np.max(x))
-        return exp / np.sum(exp, axis=1, keepdims=True)
-
-    def softmax_grad(self, y, dy):
-        return y * (dy - np.sum(y * dy, axis=1, keepdims=True))
-
-
-class CrossEntropy(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
-
-    def forward(self):
-        self.output.value = self.cross_entropy(
-            self.inputs[0].value, self.inputs[1].value
-        )
-
-    def backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.cross_entropy_grad(
-            self.inputs[0].value, self.inputs[1].value, self.output.grad
-        )
-        self.inputs[1].grad = self.inputs[1].grad + self.cross_entropy_grad(
-            self.inputs[1].value, self.inputs[0].value, self.output.grad
-        )
-
-    def cross_entropy(self, y, t):
-        return -np.sum(t * np.log(y + 1e-7)) / y.shape[0]
-
-    def cross_entropy_grad(self, y, t, dy):
-        return -dy * t / y.shape[0]
-
-
 class Conv2D(Function):
     def __init__(self, inputs, output, stride, padding):
         super().__init__(inputs, output)
         self.stride = stride
         self.padding = padding
 
-    def forward(self):
+    def _forward(self):
         self.output.value = self.conv2d(
             self.inputs[0].value, self.inputs[1].value, self.stride, self.padding
         )
 
-    def backward(self):
+    def _backward(self):
         self.inputs[0].grad = self.inputs[0].grad + self.conv2d_grad(
             self.inputs[0].value,
             self.inputs[1].value,
@@ -168,12 +91,12 @@ class MaxPool2D(Function):
         self.stride = stride
         self.padding = padding
 
-    def forward(self):
+    def _forward(self):
         self.output.value = self.max_pool2d(
             self.inputs[0].value, self.stride, self.padding
         )
 
-    def backward(self):
+    def _backward(self):
         self.inputs[0].grad = self.inputs[0].grad + self.max_pool2d_grad(
             self.inputs[0].value,
             self.output.value,
@@ -252,12 +175,12 @@ class AvgPool2D(Function):
         self.stride = stride
         self.padding = padding
 
-    def forward(self):
+    def _forward(self):
         self.output.value = self.avg_pool2d(
             self.inputs[0].value, self.stride, self.padding
         )
 
-    def backward(self):
+    def _backward(self):
         self.inputs[0].grad = self.inputs[0].grad + self.avg_pool2d_grad(
             self.inputs[0].value, self.output.grad, self.stride, self.padding
         )
@@ -320,10 +243,10 @@ class Flatten(Function):
     def __init__(self, inputs, output):
         super().__init__(inputs, output)
 
-    def forward(self):
+    def _forward(self):
         self.output.value = self.flatten(self.inputs[0].value)
 
-    def backward(self):
+    def _backward(self):
         self.inputs[0].grad = self.inputs[0].grad + self.reshape(
             self.output.grad, self.inputs[0].value.shape
         )

@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 from micrograd.tensors.tensor import Tensor
 
@@ -6,13 +6,15 @@ from micrograd.tensors.tensor import Tensor
 # Class that implements a tensor of unsigned 8-bit integers
 # All operations are quantized and performed on the CPU
 class TensorU8(Tensor):
+    # TODO: Implement type bounds checking
     def __init__(
         self,
-        shape,
         value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
+        shape: Optional[Tuple[int]] = None,
         requires_grad: bool = False,
     ):
         if value is None:
+            assert shape is not None
             value = np.zeros(shape, dtype=np.uint8)
         else:
             if not isinstance(value, np.ndarray):
@@ -28,4 +30,4 @@ class TensorU8(Tensor):
             raise Exception("Value shape does not match tensor shape")
         if value.dtype != np.uint8:
             value = value.astype(np.uint8)
-        super().__init__(shape=shape, value=value, requires_grad=requires_grad)
+        super().__init__(value=value, shape=shape, requires_grad=requires_grad)

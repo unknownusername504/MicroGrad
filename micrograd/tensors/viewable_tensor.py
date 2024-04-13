@@ -496,9 +496,7 @@ class TestViewableTensor(unittest.TestCase):
     def test_viewable_tensor(self):
         try:
             # Create the tensor
-            tensor = Tensor(
-                shape=(2, 2), value=np.array([[1, 2], [3, 4]], dtype=np.uint8)
-            )
+            tensor = Tensor(np.array([[1, 2], [3, 4]], dtype=np.uint8))
             # Create the viewable tensor
             viewable_tensor = ViewableTensor(tensor)
         except Exception as e:

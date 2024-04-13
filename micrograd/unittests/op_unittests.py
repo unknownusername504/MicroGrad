@@ -11,9 +11,9 @@ class TestOps(unittest.TestCase):
         print("!!! Running op_unittest_add !!!")
         # Test addition
         # Create the input tensors
-        x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
-        y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), (x.value + y.value))
+        x = TensorU8(np.array([[1, 2], [3, 4]]))
+        y = TensorU8(np.array([[5, 6], [7, 8]]))
+        expected_z = TensorU8((x.value + y.value))
         add_func = Tensor.Add([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -35,9 +35,9 @@ class TestOps(unittest.TestCase):
         print("!!! Running op_unittest_sub !!!")
         # Test subtraction
         # Create the input tensors
-        x = TensorU8((2, 2), np.array([[8, 7], [6, 5]]))
-        y = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
-        expected_z = TensorU8((2, 2), (x.value - y.value))
+        x = TensorU8(np.array([[8, 7], [6, 5]]))
+        y = TensorU8(np.array([[1, 2], [3, 4]]))
+        expected_z = TensorU8((x.value - y.value))
         sub_func = Tensor.Sub([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -59,9 +59,9 @@ class TestOps(unittest.TestCase):
         print("!!! Running op_unittest_dot !!!")
         # Test dot product
         # Create the input tensors
-        x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
-        y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), np.dot(x.value, y.value))
+        x = TensorU8(np.array([[1, 2], [3, 4]]))
+        y = TensorU8(np.array([[5, 6], [7, 8]]))
+        expected_z = TensorU8(np.dot(x.value, y.value))
         dot_func = Tensor.Dot([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner
@@ -83,9 +83,9 @@ class TestOps(unittest.TestCase):
         print("!!! Running op_unittest_mul !!!")
         # Test multiplication
         # Create the input tensors
-        x = TensorU8((2, 2), np.array([[1, 2], [3, 4]]))
-        y = TensorU8((2, 2), np.array([[5, 6], [7, 8]]))
-        expected_z = TensorU8((2, 2), np.matmul(x.value, y.value))
+        x = TensorU8(np.array([[1, 2], [3, 4]]))
+        y = TensorU8(np.array([[5, 6], [7, 8]]))
+        expected_z = TensorU8(np.matmul(x.value, y.value))
         mul_func = Tensor.Matmul([x, y])
         with WaveRunner() as wave_runner:
             # Send the function to the wave runner

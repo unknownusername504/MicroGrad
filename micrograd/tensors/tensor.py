@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 from typing import ClassVar
 
@@ -7,20 +7,25 @@ from micrograd.utils.debug_utils import debug_print
 
 class Function:
     def __init__(self, inputs: List["Tensor"]):
-        self.inputs = inputs
+        if len(inputs) == 0:
+            raise Exception("No inputs provided")
+        elif len(inputs) == 1:
+            self.input = inputs[0]
+        else:
+            self.inputs = inputs
         self.output = None
 
-    def forward(self):
+    def _forward(self):
         raise NotImplementedError
 
-    def backward(self):
+    def _backward(self):
         raise NotImplementedError
 
     def __call__(self):
-        result = self.forward()
+        self.output = self._forward()
         if Tensor.auto_grad:
-            self.backward()
-        return result
+            self._backward()
+        return self.output
 
 
 class Tensor:
@@ -41,36 +46,57 @@ class Tensor:
 
     def __init__(
         self,
-        shape,
         value: Union[List, np.ndarray, "Tensor", np.number, int, float] = None,
+        shape: Optional[Tuple[int]] = None,
         requires_grad: bool = True,
     ):
-        self.shape = shape
-        self.dtype = value.dtype if value is not None else np.float64
+        if isinstance(value, int):
+            self.dtype = np.int64
+        elif isinstance(value, float):
+            self.dtype = np.float64
+        else:
+            self.dtype = value.dtype if value is not None else np.float64
         # If the value is None then create a new numpy array of zeros
         if value is None:
+            assert shape is not None
             self.value = np.zeros(shape, dtype=self.dtype)
         else:
-            if not isinstance(value, np.ndarray):
-                if type(value) in [int, float, np.number]:
-                    value = np.array([value])
-                elif type(value) is List:
-                    value = np.array(value)
-                elif isinstance(value, Tensor):
-                    value = value.value
-                else:
-                    raise Exception("Invalid value type")
-            self.value = value
-        if value.shape != shape:
-            raise Exception("Value shape does not match tensor shape")
-        if value.dtype != self.dtype:
-            value = value.astype(self.dtype)
+            if isinstance(value, np.ndarray):
+                self.dtype = value.dtype
+                self.value = value
+            elif type(value) is List:
+                self.dtype = np.float64
+                self.value = np.array(value, dtype=self.dtype)
+            elif isinstance(value, Tensor):
+                self.dtype = value.dtype
+                self.value = value.value
+            elif isinstance(value, np.number):
+                self.dtype = value.dtype
+                self.value = np.array([value], dtype=self.dtype)
+            elif type(value) is int:
+                self.dtype = np.int64
+                self.value = np.array([value], dtype=self.dtype)
+            elif type(value) is float:
+                self.dtype = np.float64
+                self.value = np.array([value], dtype=self.dtype)
+            else:
+                raise Exception("Invalid value type")
+        # If the shape is None then set the shape to the value shape
+        if shape is None:
+            self.shape = self.value.shape
+        else:
+            self.shape = shape
+            value = value.reshape(shape)
         self.requires_grad = requires_grad
         if self.requires_grad:
-            self.grad = np.zeros(shape, dtype=self.dtype)
+            self.zero_grad()
             self.grad_fn = None
         self.children = {}
         self.parents = {}
+
+    # Function to zero the gradient
+    def zero_grad(self):
+        self.grad = np.zeros(self.shape, dtype=self.dtype)
 
     # Length of the tensor
     def __len__(self):
@@ -421,7 +447,7 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.add(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
@@ -429,7 +455,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
                 self.inputs[1].grad = self.add(self.inputs[1].grad, self.output.grad)
@@ -467,7 +493,7 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.sub(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
@@ -475,7 +501,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
                 self.inputs[1].grad = self.sub(self.inputs[1].grad, self.output.grad)
@@ -513,7 +539,7 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.dot(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
@@ -521,7 +547,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.add(
                     self.inputs[0].grad,
@@ -565,7 +591,7 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.matmul(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
@@ -573,7 +599,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.add(
                     self.inputs[0].grad,
@@ -617,7 +643,7 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.div(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
@@ -625,7 +651,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.add(
                     self.inputs[0].grad,
@@ -669,13 +695,13 @@ class Tensor:
             self.output.grad_fn = self
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
-        def forward(self):
+        def _forward(self):
             self.output.value = self.neg(self.inputs[0].get_value())
             return self.output
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
-        def backward(self):
+        def _backward(self):
             if Tensor.auto_grad:
                 self.inputs[0].grad = self.neg(self.output.grad)
             else:
