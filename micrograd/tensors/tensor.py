@@ -22,7 +22,11 @@ class Function:
         raise NotImplementedError
 
     def __call__(self):
-        self.output = self._forward()
+        output = self._forward()
+        # FIXME: Sould I only return tensors?
+        if not isinstance(output, Tensor):
+            output = Tensor(value=output)
+        self.output = output
         if Tensor.auto_grad:
             self._backward()
         return self.output
@@ -86,7 +90,7 @@ class Tensor:
             self.shape = self.value.shape
         else:
             self.shape = shape
-            value = value.reshape(shape)
+            self.value = self.value.reshape(self.shape)
         self.requires_grad = requires_grad
         if self.requires_grad:
             self.zero_grad()
@@ -102,6 +106,10 @@ class Tensor:
     def __len__(self):
         return len(self.value)
 
+    # Maximum value of the tensor
+    def max(self):
+        return self.value.max()
+
     # Casting the tensor dytpe
     def astype(self, dtype):
         self.value = self.value.astype(dtype)
@@ -110,6 +118,9 @@ class Tensor:
 
     def tolist(self):
         return self.value.tolist()
+
+    def item(self):
+        return self.value.item()
 
     # Function to test if the tensor is equal to another tensor
     # Only checks the value
@@ -270,127 +281,61 @@ class Tensor:
         return self
 
     @staticmethod
-    def can_broadcast(shape1, shape2):
-        if shape1 == shape2:
-            return True
-        shape1, shape2 = list(shape1), list(shape2)
-        # We want to see if the tensors can be broadcasted
-        # Get the number of dimensions
-        num_dims1 = len(shape1)
-        num_dims2 = len(shape2)
-        # Get the number of dimensions to pad
-        num_dims_pad = abs(num_dims1 - num_dims2)
-        # Get the number of dimensions to add
-        num_dims_add = max(num_dims1, num_dims2) - num_dims_pad
-        # Get the number of dimensions to broadcast
-        num_dims_broadcast = min(num_dims1, num_dims2)
-        # Loop through the dimensions to pad
-        for _ in range(num_dims_pad):
-            # Get the dimension
-            dim1 = shape1.pop()
-            dim2 = shape2.pop()
-            # If the dimensions are not equal
-            if dim1 != dim2:
-                # Return False
-                return False
-        # Loop through the dimensions to add
-        for _ in range(num_dims_add):
-            # Get the dimension
-            dim1 = shape1.pop()
-            dim2 = shape2.pop()
-            # If the dimensions are not equal
-            if dim1 != dim2:
-                # If one of the dimensions is 1
-                if dim1 == 1 or dim2 == 1:
-                    # Continue
-                    continue
-                else:
-                    # Return False
-                    return False
-        # Loop through the dimensions to broadcast
-        for _ in range(num_dims_broadcast):
-            # Get the dimension
-            dim1 = shape1.pop()
-            dim2 = shape2.pop()
-            # If the dimensions are not equal
-            if dim1 != dim2:
-                # If one of the dimensions is 1
-                if dim1 == 1 or dim2 == 1:
-                    # Continue
-                    continue
-                else:
-                    # Return False
-                    return False
-        # Return True
-        return True
+    def get_output_shape(x: "Tensor", y: "Tensor") -> Tuple[int, ...]:
+        x_shape, y_shape = list(x.shape), list(y.shape)
+        if x_shape[0] == y_shape[0]:
+            expand_dir = "right"
+        elif x_shape[-1] == y_shape[-1]:
+            expand_dir = "left"
+        else:
+            raise Exception(
+                "Cannot broadcast tensors of different shapes x:{} y:{}".format(
+                    x_shape, y_shape
+                )
+            )
+
+        # Pad the smaller shape with 1s
+        if len(x_shape) < len(y_shape):
+            if expand_dir == "right":
+                x_shape = x_shape + ([1] * (len(y_shape) - len(x_shape)))
+            elif expand_dir == "left":
+                x_shape = ([1] * (len(y_shape) - len(x_shape))) + x_shape
+        elif len(x_shape) > len(y_shape):
+            if expand_dir == "right":
+                y_shape = y_shape + ([1] * (len(x_shape) - len(y_shape)))
+            elif expand_dir == "left":
+                y_shape = ([1] * (len(x_shape) - len(y_shape))) + y_shape
+
+        assert len(x_shape) == len(y_shape)
+
+        debug_print("x_shape:{} y_shape:{}".format(x_shape, y_shape))
+        output_shape = []
+
+        # Check if the shapes are compatible
+        for dim1, dim2 in zip(x_shape, y_shape):
+            if dim1 != dim2 and dim1 != 1 and dim2 != 1:
+                raise Exception(
+                    "Cannot broadcast tensors of different shapes x:{} y:{}".format(
+                        x_shape, y_shape
+                    )
+                )
+            else:
+                output_shape.append(max(dim1, dim2))
+
+        debug_print("output_shape:", output_shape)
+
+        return tuple(output_shape)
 
     @staticmethod
-    def get_output_shape(x: "Tensor", y: "Tensor") -> Tuple[int, ...]:
-        if not Tensor.can_broadcast(x.shape, y.shape):
-            raise Exception("Cannot broadcast tensors of different shapes")
-        if x.shape == y.shape:
-            return x.shape
-        # We want to determine the output shape based on the input shapes
-        # We need to see if the operation is element-wise or can be broadcasted
-        # Get the shapes of the tensors
-        shape1, shape2 = list(x.shape), list(y.shape)
+    def broadcast(x: "Tensor", y: "Tensor") -> Tuple["Tensor", "Tensor"]:
+        # We want to broadcast the tensors
         # Get the number of dimensions
-        num_dims1 = len(shape1)
-        num_dims2 = len(shape2)
-        # Get the number of dimensions to pad
-        num_dims_pad = abs(num_dims1 - num_dims2)
-        # Get the number of dimensions to add
-        num_dims_add = max(num_dims1, num_dims2) - num_dims_pad
-        # Get the number of dimensions to broadcast
-        num_dims_broadcast = min(num_dims1, num_dims2)
-        # Get the output shape
-        output_shape = []
-        # Loop through the dimensions to pad
-        for _ in range(num_dims_pad):
-            # Append the dimension
-            output_shape.append(1)
-        # Loop through the dimensions to add
-        for _ in range(num_dims_add):
-            # Get the dimension
-            dim1 = shape1.pop()
-            dim2 = shape2.pop()
-            # If the dimensions are not equal
-            if dim1 != dim2:
-                # If one of the dimensions is 1
-                if dim1 == 1:
-                    # Append the dimension
-                    output_shape.append(dim2)
-                elif dim2 == 1:
-                    # Append the dimension
-                    output_shape.append(dim1)
-                else:
-                    # Raise an exception
-                    raise Exception("Cannot add tensors of different shapes")
-            else:
-                # Append the dimension
-                output_shape.append(dim1)
-        # Loop through the dimensions to broadcast
-        for _ in range(num_dims_broadcast):
-            # Get the dimension
-            dim1 = shape1.pop()
-            dim2 = shape2.pop()
-            # If the dimensions are not equal
-            if dim1 != dim2:
-                # If one of the dimensions is 1
-                if dim1 == 1:
-                    # Append the dimension
-                    output_shape.append(dim2)
-                elif dim2 == 1:
-                    # Append the dimension
-                    output_shape.append(dim1)
-                else:
-                    # Raise an exception
-                    raise Exception("Cannot add tensors of different shapes")
-            else:
-                # Append the dimension
-                output_shape.append(dim1)
-        # Return the output shape
-        return tuple(output_shape)
+        output_shape = Tensor.get_output_shape(x, y)
+        # Create the output tensors
+        x_out = x.reshape(output_shape)
+        y_out = y.reshape(output_shape)
+        # Return the output tensors
+        return x_out, y_out
 
     @staticmethod
     def get_output_data_type(x: "Tensor", y: "Tensor") -> np.dtype:
@@ -422,17 +367,6 @@ class Tensor:
                 return type(y)
         raise Exception("Unknown tensor type")
 
-    @staticmethod
-    def broadcast(x: "Tensor", y: "Tensor") -> Tuple["Tensor", "Tensor"]:
-        # We want to broadcast the tensors
-        # Get the number of dimensions
-        output_shape = Tensor.get_output_shape(x, y)
-        # Create the output tensors
-        x_out = x.reshape(output_shape)
-        y_out = y.reshape(output_shape)
-        # Return the output tensors
-        return x_out, y_out
-
     class Add(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
@@ -448,7 +382,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
-            self.output.value = self.add(
+            self.output.value = Tensor.Add.add(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
             return self.output
@@ -457,13 +391,18 @@ class Tensor:
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
-                self.inputs[1].grad = self.add(self.inputs[1].grad, self.output.grad)
+                self.inputs[0].grad = Tensor.Add.add(
+                    self.inputs[0].grad, self.output.grad
+                )
+                self.inputs[1].grad = Tensor.Add.add(
+                    self.inputs[1].grad, self.output.grad
+                )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
+        @staticmethod
         def add(
-            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
         ) -> np.ndarray:
             debug_print("add x:", x)
             debug_print("add y:", y)
@@ -494,7 +433,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
-            self.output.value = self.sub(
+            self.output.value = Tensor.Sub.sub(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
             return self.output
@@ -503,13 +442,18 @@ class Tensor:
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.add(self.inputs[0].grad, self.output.grad)
-                self.inputs[1].grad = self.sub(self.inputs[1].grad, self.output.grad)
+                self.inputs[0].grad = Tensor.Add.add(
+                    self.inputs[0].grad, self.output.grad
+                )
+                self.inputs[1].grad = Tensor.Sub.sub(
+                    self.inputs[1].grad, self.output.grad
+                )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
+        @staticmethod
         def sub(
-            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
         ) -> np.ndarray:
             debug_print("sub x:", x)
             debug_print("sub y:", y)
@@ -549,19 +493,20 @@ class Tensor:
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.add(
+                self.inputs[0].grad = Tensor.Add.add(
                     self.inputs[0].grad,
                     self.dot(self.inputs[1].get_value(), self.output.grad),
                 )
-                self.inputs[1].grad = self.add(
+                self.inputs[1].grad = Tensor.Add.add(
                     self.inputs[1].grad,
                     self.dot(self.inputs[0].get_value(), self.output.grad),
                 )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
+        @staticmethod
         def dot(
-            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
         ) -> np.ndarray:
             debug_print("dot x:", x)
             debug_print("dot y:", y)
@@ -592,7 +537,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
-            self.output.value = self.matmul(
+            self.output.value = Tensor.Matmul.matmul(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
             return self.output
@@ -601,19 +546,24 @@ class Tensor:
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.add(
+                self.inputs[0].grad = Tensor.Add.add(
                     self.inputs[0].grad,
-                    self.matmul(self.output.grad, self.inputs[1].get_value().T),
+                    Tensor.Matmul.matmul(
+                        self.output.grad, self.inputs[1].get_value().T
+                    ),
                 )
-                self.inputs[1].grad = self.add(
+                self.inputs[1].grad = Tensor.Add.add(
                     self.inputs[1].grad,
-                    self.matmul(self.inputs[0].get_value().T, self.output.grad),
+                    Tensor.Matmul.matmul(
+                        self.inputs[0].get_value().T, self.output.grad
+                    ),
                 )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
+        @staticmethod
         def matmul(
-            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
         ) -> np.ndarray:
             debug_print("matmul x:", x)
             debug_print("matmul y:", y)
@@ -644,7 +594,7 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
-            self.output.value = self.div(
+            self.output.value = Tensor.Div.div(
                 self.inputs[0].get_value(), self.inputs[1].get_value()
             )
             return self.output
@@ -653,21 +603,24 @@ class Tensor:
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.add(
+                self.inputs[0].grad = Tensor.Add.add(
                     self.inputs[0].grad,
-                    self.div(self.output.grad, self.inputs[1].get_value()),
+                    Tensor.Div.div(self.output.grad, self.inputs[1].get_value()),
                 )
-                self.inputs[1].grad = self.add(
+                self.inputs[1].grad = Tensor.Add.add(
                     self.inputs[1].grad,
-                    self.div(self.inputs[0].get_value(), self.inputs[1].get_value())
+                    Tensor.Div.div(
+                        self.inputs[0].get_value(), self.inputs[1].get_value()
+                    )
                     * -1
                     * self.output.grad,
                 )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
+        @staticmethod
         def div(
-            self, x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
         ) -> np.ndarray:
             debug_print("div x:", x)
             debug_print("div y:", y)
@@ -696,18 +649,19 @@ class Tensor:
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
-            self.output.value = self.neg(self.inputs[0].get_value())
+            self.output.value = Tensor.Neg.neg(self.inputs[0].get_value())
             return self.output
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
             if Tensor.auto_grad:
-                self.inputs[0].grad = self.neg(self.output.grad)
+                self.inputs[0].grad = Tensor.Neg.neg(self.output.grad)
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
-        def neg(self, x: Union["Tensor", np.ndarray]) -> np.ndarray:
+        @staticmethod
+        def neg(x: Union["Tensor", np.ndarray]) -> np.ndarray:
             debug_print("neg x:", x)
             if isinstance(x, Tensor):
                 x = x.get_value()

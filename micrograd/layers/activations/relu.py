@@ -1,6 +1,6 @@
 import numpy as np
 
-from micrograd.tensors.tensor import Function
+from micrograd.tensors.tensor import Function, Tensor
 
 
 class ReLU(Function):
@@ -14,7 +14,7 @@ class ReLU(Function):
         return np.where(x > 0, 1, 0)
 
     def _forward(self):
-        return self.relu(self.input.value)
+        return Tensor(self.relu(self.input.value))
 
     def _backward(self):
         self.input.grad = self.input.grad + self.relu_grad(self.input.value)

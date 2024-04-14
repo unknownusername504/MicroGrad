@@ -4,15 +4,15 @@ from micrograd.tensors.tensor import Function
 
 
 class Flatten(Function):
-    def __init__(self, inputs, output):
-        super().__init__(inputs, output)
+    def __init__(self, input):
+        super().__init__([input])
 
     def _forward(self):
-        self.output.value = self.flatten(self.inputs[0].value)
+        return self.flatten(self.input.value)
 
     def _backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.reshape(
-            self.output.grad, self.inputs[0].value.shape
+        self.input.grad = self.input.grad + self.reshape(
+            self.output.grad, self.input.value.shape
         )
 
     def flatten(self, x):

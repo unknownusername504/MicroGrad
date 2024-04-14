@@ -20,8 +20,12 @@ setup(
     install_requires=[
         "numpy",
         "psutil",
+        "pygame",
         "gym",
         "matplotlib",
+        "tqdm",
+        "opencv-python",
+        "imageio",
     ],
     python_requires=">=3.8",
 )

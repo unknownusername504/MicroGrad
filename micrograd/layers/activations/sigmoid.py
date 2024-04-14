@@ -1,6 +1,6 @@
 import numpy as np
 
-from micrograd.tensors.tensor import Function
+from micrograd.tensors.tensor import Function, Tensor
 
 
 class Sigmoid(Function):
@@ -11,7 +11,7 @@ class Sigmoid(Function):
         return 1 / (1 + np.exp(-x))
 
     def _forward(self):
-        return self.sigmoid(self.input.value)
+        return Tensor(self.sigmoid(self.input.value))
 
     def _backward(self):
         self.input.grad = self.input.grad - (self.output.value @ self.output.value)
