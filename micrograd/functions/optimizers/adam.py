@@ -4,7 +4,7 @@ from micrograd.tensors.tensor import Tensor
 
 
 class AdamOptim:
-    def __init__(self, params, lr=0.001, betas=(0.9, 0.999), eps=1e-8):
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8):
         self.params = params
         self.lr = lr
         self.betas = betas

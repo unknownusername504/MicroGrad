@@ -119,7 +119,7 @@ class CartPole:
         self.frames_save_path = os.path.join(
             os.path.dirname(self.script_path), "cartpole_best_frames.gif"
         )
-        self.save_model_pass_threshold = 0.1
+        self.save_model_pass_threshold = 0.0
         self.use_saved_model = True
 
         self.seed = None
@@ -148,7 +148,7 @@ class CartPole:
             model_output_dim,
             self.env.action_space,
         )
-        self.optimizer = AdamOptim(self.model.get_parameters())
+        self.optimizer = AdamOptim(self.model.get_parameters(), lr=1e-4)
         self.loss = lambda y_pred, y_true: CrossEntropyLoss(y_pred, y_true)()
         self.policy = CartPole.ProximalPolicy(self.model)
         self.gamma = 0.99
@@ -212,10 +212,12 @@ class CartPole:
         )
 
     def update_model(self, action):
+        self.optimizer.zero_grad()
         self.step(action)
         target = self.get_target()
-        self.loss(self.model_output, target)
-        self.optimizer.zero_grad()
+        # Turn off autograd for the loss calculation
+        with Tensor.with_auto_grad(False):
+            _ = self.loss(self.model_output, target)
         self.optimizer.step()
 
     def update_model_from_buffer(self, buffer, batch_size):
@@ -230,13 +232,13 @@ class CartPole:
     def load_model(self, path):
         self.model.load(path)
 
-    def train(self, episodes, batch_size=16, sample_freq=4, steps_to_pass=100):
+    def train(self, num_episodes, batch_size=16, sample_freq=4, steps_to_pass=100):
         buffer = ReplayBuffer(capacity=(batch_size * sample_freq * 4))
         if self.use_saved_model:
             print(f"Loading model from {self.model_save_path}")
             self.load_model(self.model_save_path)
         with Tensor.with_auto_grad(True):
-            for _ in tqdm(range(episodes)):
+            for _ in tqdm(range(num_episodes)):
                 self.reset_env()
                 sample_cnt = 0
                 while not self.done and (self.env._elapsed_steps < steps_to_pass):
@@ -254,12 +256,13 @@ class CartPole:
                     ):
                         self.update_model_from_buffer(buffer, batch_size)
 
-    def test(self, episodes, steps_to_pass=100):
+    def test(self, num_episodes, steps_to_pass=100, num_pass_early_stop=10):
         with Tensor.with_auto_grad(False):
             best_num_steps = 0
             pass_fail = []
             frames = []
-            for _ in tqdm(range(episodes)):
+            passing_streak = 0
+            for _ in tqdm(range(num_episodes)):
                 self.reset_env()
                 this_frames = []
                 while not self.done and (self.env._elapsed_steps < steps_to_pass):
@@ -274,13 +277,20 @@ class CartPole:
                 if self.done:
                     debug_print("Test episode finished in failure")
                     pass_fail.append(0)
+                    passing_streak = 0
                 else:
                     debug_print("Test episode finished in success")
                     pass_fail.append(1)
+                    passing_streak += 1
+                    if passing_streak >= num_pass_early_stop:
+                        print(
+                            f"Early stopping at episode {_} with {passing_streak} consecutive passes"
+                        )
+                        break
             passrate = np.mean(pass_fail)
             print(f"Pass rate: {passrate * 100}%")
             print(f"Best number of steps: {best_num_steps}")
-            if passrate > self.save_model_pass_threshold:
+            if passrate >= self.save_model_pass_threshold:
                 print(f"Saving model to {self.model_save_path}")
                 self.save_model(self.model_save_path)
             if self.save_best_train_frames:
@@ -290,7 +300,7 @@ class CartPole:
 
 def test_cartpole():
     cart_pole = CartPole()
-    cart_pole.train(10000)
+    cart_pole.train(25000)
     cart_pole.test(20)
 
 
