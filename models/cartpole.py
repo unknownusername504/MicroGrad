@@ -25,8 +25,8 @@ class ReplayBuffer:
     def __init__(self, capacity):
         self.buffer = deque(maxlen=capacity)
 
-    def push(self, state, action, reward, next_state, done):
-        self.buffer.append((state, action, reward, next_state, done))
+    def push(self, state, action, reward, done):
+        self.buffer.append((state, action, reward, done))
 
     def sample(self, batch_size):
         return random.sample(self.buffer, batch_size)
@@ -93,18 +93,39 @@ class CartPole:
                     param.value = value
 
     class ProximalPolicy:
-        # Epsilon-greedy exploration strategy
-        def __init__(self, model, epsilon=0.1):
+        # Epsilon-greedy exploration strategy with adaptive epsilon
+        def __init__(
+            self, model, epsilon=0.1, epsilon_decay=0.99, performance_threshold=0.5
+        ):
             self.model = model
             self.epsilon = epsilon
+            self.epsilon_decay = epsilon_decay
+            self.performance_threshold = performance_threshold
 
-        def __call__(self, model_input):
+        def __call__(self, model_input, performance):
             if np.random.uniform(0, 1) < self.epsilon:
                 # Exploration: choose a random action
-                return self.model.get_random_action()
+                action = self.model.get_random_action()
             else:
                 # Exploitation: choose the best action according to the current policy
-                return Tensor(np.argmax(self.model(model_input).value)).item()
+                action = Tensor(np.argmax(self.model(model_input).value)).item()
+                # Clip the action to be within the action space
+                action = np.clip(action, 0, self.model.action_space.n - 1)
+                # Update the performance threshold based on the current performance
+                self.performance_threshold = max(
+                    self.performance_threshold, performance
+                )
+
+            # Adjust epsilon based on performance
+            if performance > self.performance_threshold:
+                self.epsilon *= self.epsilon_decay
+            else:
+                self.epsilon /= self.epsilon_decay
+
+            # Clip epsilon to be between 0 and 1
+            self.epsilon = np.clip(self.epsilon, 0.0, 1.0)
+
+            return action
 
     def __init__(self):
         self.do_render = False
@@ -131,11 +152,28 @@ class CartPole:
         self.env = gym.make("CartPole-v1", render_mode="rgb_array")
         debug_print("Initialized environment")
 
-        self.reset_env(self.seed)
+        # Last n actions, rewards, and gamma values
+        self.num_history = 2
+        self.num_history_features = 3
+        self.history = deque(maxlen=self.num_history)
 
-        model_input_dim = self.env.observation_space.shape[0] * 2
-        model_hidden_dim1 = 128
-        model_hidden_dim2 = 128
+        self.base_gamma = 0.99
+        # Init gamma
+        self.gamma = self.base_gamma
+        # Gamma will be attenuated in order to increase the importance of future rewards as the model learns
+        self.base_gamma_decay = 0.96875
+
+        self.reset_env(self.seed, num_epochs=0)
+        self.avg_steps = 0.0
+        self.target_steps = 100
+        # Number of epochs to adjust the learning rate
+        self.lr_adjustment_frequency = 10
+
+        model_input_dim = self.env.observation_space.shape[0] + (
+            self.num_history_features * self.num_history
+        )
+        model_hidden_dim1 = 32
+        model_hidden_dim2 = 16
         model_output_dim = self.env.action_space.n
         debug_print(f"Model input dim: {model_input_dim}")
         debug_print(f"Model hidden dim1: {model_hidden_dim1}")
@@ -148,10 +186,31 @@ class CartPole:
             model_output_dim,
             self.env.action_space,
         )
-        self.optimizer = AdamOptim(self.model.get_parameters(), lr=1e-4)
+
+        self.optimizer_lr_max = 1e-4
+        self.optimizer_lr_min = 1e-6
+        self.optimizer_lr_decay_min = 0.99
+        self.optimizer_lr_decay_max = 0.96875
+        # Time decay learning rate, targeting 100 steps to reach the minimum learning rate
+        self.optimizer_lr_decay = (
+            self.optimizer_lr_max - self.optimizer_lr_min
+        ) / self.target_steps
+        self.optimizer_lr = self.optimizer_lr_max
+        # Defining lr_decay not necessary in ctor as it is set in setup_lr_adjustment
+        self.optimizer = AdamOptim(
+            self.model.get_parameters(),
+            lr=self.optimizer_lr,
+        )
+        self.optimizer.setup_lr_adjustment(
+            lr_adjustment_rate=1.0,
+            optimizer_lr_min=self.optimizer_lr_min,
+            optimizer_lr_max=self.optimizer_lr_max,
+            optimizer_lr_decay_min=self.optimizer_lr_decay_min,
+            optimizer_lr_decay_max=self.optimizer_lr_decay_max,
+        )
+
         self.loss = lambda y_pred, y_true: CrossEntropyLoss(y_pred, y_true)()
         self.policy = CartPole.ProximalPolicy(self.model)
-        self.gamma = 0.99
 
     def render(self):
         frame = self.env.render()
@@ -176,15 +235,36 @@ class CartPole:
         except Exception as e:
             print(f"Error saving GIF: {e}")
 
-    def reset_env(self, seed=None):
+    def reset_env(self, seed=None, num_epochs=None):
         debug_print("Resetting environment")
+        if num_epochs is not None:
+            self.num_epochs = num_epochs
+        num_steps = self.env._elapsed_steps
+        if num_steps is not None:
+            self.avg_steps = 0.05 * num_steps + (1 - 0.05) * self.avg_steps
+            # Adjust the learning rate and decay less frequently
+            if self.num_epochs % self.lr_adjustment_frequency == 0:
+                self.optimizer.adjust_learning_rate(
+                    num_steps, self.avg_steps, self.target_steps
+                )
         observation, _ = self.env.reset(seed=seed)
         self.reward = 0
-        self.state = Tensor(observation)
-        self.next_state = self.state
-        self.model_input = Tensor(
-            np.concatenate((self.state.value, self.next_state.value))
-        )
+        # Running average of the rewards
+        self.running_reward = 0.0
+        # Reset the gamma value, help the model keep focus on long term by adjusting the decay based on the delta achieved
+        gamma_delta = self.base_gamma - self.gamma
+        self.gamma = self.base_gamma
+        self.gamma_decay = self.base_gamma_decay - (gamma_delta / 2.0)
+        self.history.clear()
+        # Initialize the history with zeros which represent no action and no reward
+        for _ in range(self.num_history):
+            empty_history = np.zeros(self.num_history_features)
+            # Set the gamma value to the current gamma
+            empty_history[-1] = self.gamma
+            self.history.append(Tensor(np.zeros(self.num_history_features)))
+        history = np.concatenate([h.value for h in self.history])
+        self.state = Tensor(np.concatenate((observation, history)))
+        self.model_input = self.state
         self.model_output = None
         self.done = False
 
@@ -192,24 +272,28 @@ class CartPole:
         if self.done:
             return
         observation, reward, terminated, truncated, _ = self.env.step(action)
-        self.reward = reward
-        self.state = self.next_state
-        self.next_state = Tensor(observation)
-        self.model_input = Tensor(
-            np.concatenate((self.state.value, self.next_state.value))
-        )
+        # Scale reward as we survive more steps
+        self.reward = reward / self.gamma
+        # Update the running reward
+        self.running_reward = 0.05 * self.reward + (1 - 0.05) * self.running_reward
+        # Attenuate the gamma value
+        self.gamma *= self.gamma_decay
+        # Update the history with the current action and reward
+        self.history.append(Tensor(np.array([action, reward, self.gamma])))
+        history = np.concatenate([h.value for h in self.history])
+        self.state = Tensor(np.concatenate((observation, history)))
+        self.model_input = self.state
         debug_print(f"Terminated: {terminated}, Truncated: {truncated}")
         self.done = terminated or truncated
 
     def choose_action(self):
-        return self.policy(self.model_input)
+        return self.policy(self.model_input, self.running_reward)
 
     def get_target(self):
+        if self.done:
+            return Tensor(self.reward)
         self.model_output = self.model(self.model_input)
-        return Tensor(
-            self.reward
-            + (self.gamma * self.model_output.max().item() * (1 - self.done))
-        )
+        return Tensor(self.reward + (self.gamma * self.running_reward))
 
     def update_model(self, action):
         self.optimizer.zero_grad()
@@ -223,20 +307,28 @@ class CartPole:
     def update_model_from_buffer(self, buffer, batch_size):
         samples = buffer.sample(batch_size)
         for sample in samples:
-            self.state, action, self.reward, self.next_state, self.done = sample
+            self.state, action, self.reward, self.done = sample
             self.update_model(action)
 
-    def save_model(self, path):
-        self.model.save(path)
+    def save_model(self):
+        print(f"Saving model to {self.model_save_path}")
+        self.model.save(self.model_save_path)
 
-    def load_model(self, path):
-        self.model.load(path)
-
-    def train(self, num_episodes, batch_size=16, sample_freq=4, steps_to_pass=100):
-        buffer = ReplayBuffer(capacity=(batch_size * sample_freq * 4))
+    def load_model(self):
         if self.use_saved_model:
             print(f"Loading model from {self.model_save_path}")
-            self.load_model(self.model_save_path)
+            self.model.load(self.model_save_path)
+
+    def train(
+        self,
+        num_episodes,
+        batch_size=16,
+        sample_freq=4,
+        steps_to_pass=100,
+        num_pass_early_stop=10,
+    ):
+        buffer = ReplayBuffer(capacity=(batch_size * sample_freq * 4))
+        pass_streak = 0
         with Tensor.with_auto_grad(True):
             for _ in tqdm(range(num_episodes)):
                 self.reset_env()
@@ -244,9 +336,7 @@ class CartPole:
                 while not self.done and (self.env._elapsed_steps < steps_to_pass):
                     self.render()
                     action = self.choose_action()
-                    buffer.push(
-                        self.state, action, self.reward, self.next_state, self.done
-                    )
+                    buffer.push(self.state, action, self.reward, self.done)
                     self.update_model(action)
                     sample_cnt = (sample_cnt + 1) % sample_freq
                     if (
@@ -255,13 +345,21 @@ class CartPole:
                         and (len(buffer) >= batch_size)
                     ):
                         self.update_model_from_buffer(buffer, batch_size)
+                if self.env._elapsed_steps < steps_to_pass:
+                    pass_streak = 0
+                else:
+                    pass_streak += 1
+                    if pass_streak >= num_pass_early_stop:
+                        print(
+                            f"Early stopping at episode {_} with {pass_streak} consecutive passes"
+                        )
+                        break
 
-    def test(self, num_episodes, steps_to_pass=100, num_pass_early_stop=10):
+    def test(self, num_episodes, steps_to_pass=100):
         with Tensor.with_auto_grad(False):
             best_num_steps = 0
             pass_fail = []
             frames = []
-            passing_streak = 0
             for _ in tqdm(range(num_episodes)):
                 self.reset_env()
                 this_frames = []
@@ -274,36 +372,35 @@ class CartPole:
                     best_num_steps = self.env._elapsed_steps
                     if self.save_best_train_frames:
                         frames = this_frames
-                if self.done:
+                if self.env._elapsed_steps < steps_to_pass:
                     debug_print("Test episode finished in failure")
                     pass_fail.append(0)
-                    passing_streak = 0
                 else:
                     debug_print("Test episode finished in success")
                     pass_fail.append(1)
-                    passing_streak += 1
-                    if passing_streak >= num_pass_early_stop:
-                        print(
-                            f"Early stopping at episode {_} with {passing_streak} consecutive passes"
-                        )
-                        break
             passrate = np.mean(pass_fail)
             print(f"Pass rate: {passrate * 100}%")
             print(f"Best number of steps: {best_num_steps}")
             if passrate >= self.save_model_pass_threshold:
-                print(f"Saving model to {self.model_save_path}")
-                self.save_model(self.model_save_path)
+                self.save_model()
             if self.save_best_train_frames:
                 print(f"Rendering best frames of length: {len(frames)}")
                 self.render_saved_frames(frames)
 
 
-def test_cartpole():
+def train_cartpole():
     cart_pole = CartPole()
-    cart_pole.train(25000)
-    cart_pole.test(20)
+    # Load the saved model if it exists
+    cart_pole.load_model()
+    num_episodes_per_round = 5000
+    num_rounds = 100
+    for round_num in range(num_rounds):
+        print(f"Training round {round_num}")
+        cart_pole.train(num_episodes_per_round)
+        cart_pole.test(20)
 
 
 if __name__ == "__main__":
     print("Starting training and testing")
-    test_cartpole()
+    train_cartpole()
+    print("Training and testing finished")
