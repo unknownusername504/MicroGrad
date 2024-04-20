@@ -36,6 +36,7 @@ class Tensor:
     # Class var to turn on/off gradient computation
     # Should only be modified using the with_auto_grad context manager
     auto_grad: ClassVar[bool] = False
+    default_dtype: ClassVar[np.dtype] = np.float64
 
     class with_auto_grad:
         def __init__(self, auto_grad: bool):
@@ -54,21 +55,16 @@ class Tensor:
         shape: Optional[Tuple[int]] = None,
         requires_grad: bool = True,
     ):
-        if isinstance(value, int):
-            self.dtype = np.int64
-        elif isinstance(value, float):
-            self.dtype = np.float64
-        else:
-            self.dtype = value.dtype if value is not None else np.float64
         # If the value is None then create a new numpy array of zeros
         if value is None:
             assert shape is not None
-            self.value = np.zeros(shape, dtype=self.dtype)
+            self.value = np.zeros(shape, dtype=Tensor.default_dtype)
         else:
             if isinstance(value, np.ndarray):
                 self.dtype = value.dtype
                 self.value = value
             elif type(value) is List:
+                # TODO: Infer type from list
                 self.dtype = np.float64
                 self.value = np.array(value, dtype=self.dtype)
             elif isinstance(value, Tensor):
@@ -94,9 +90,6 @@ class Tensor:
         self.requires_grad = requires_grad
         if self.requires_grad:
             self.zero_grad()
-            self.grad_fn = None
-        self.children = {}
-        self.parents = {}
 
     # Function to zero the gradient
     def zero_grad(self):
@@ -269,14 +262,26 @@ class Tensor:
         return self
 
     # Reshape the tensor
-    def reshape(self, shape):
+    def reshape(self, shape: Tuple[int]):
         self.value = self.value.reshape(shape)
         self.shape = shape
         return self
 
     # Transpose the tensor
-    def transpose(self, axes=None):
+    def transpose(self, axes: Optional[Tuple[int]] = None):
         self.value = self.value.transpose(axes)
+        self.shape = self.value.shape
+        return self
+
+    def expand_dims(self, axis: Union[int, Tuple[int]]):
+        self.value = np.expand_dims(self.value, axis)
+        self.shape = self.value.shape
+        return self
+
+    # Join a sequence of arrays along an existing axis.
+    def concatenate(self, tensors, axis=0):
+        tensors = [tensor.value for tensor in tensors]
+        self.value = np.concatenate([self.value] + tensors, axis=axis)
         self.shape = self.value.shape
         return self
 
@@ -342,7 +347,8 @@ class Tensor:
         # We want to determine the output type based on the input types
         # If the tensor types are not the same then take the higher type
         # List of known data types in order of precedence
-        known_data_types = [np.float64, np.uint8]
+        # Get all numpy datatypes
+        known_data_types = np.sctypes["float"] + np.sctypes["int"] + np.sctypes["uint"]
         data_type_1 = x.dtype
         data_type_2 = y.dtype
         for data_type in known_data_types:
@@ -357,7 +363,7 @@ class Tensor:
         # We want to determine the output type based on the input types
         # If the tensor types are not the same then take the higher type
         # List of known data types in order of precedence
-        known_data_types = [np.float64, np.uint8]
+        known_data_types = np.sctypes["float"] + np.sctypes["int"] + np.sctypes["uint"]
         data_type_1 = x.dtype
         data_type_2 = y.dtype
         for data_type in known_data_types:
@@ -370,15 +376,12 @@ class Tensor:
     class Add(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
-            # Set the gradient function
-            self.inputs[0].grad_fn = self
-            self.inputs[1].grad_fn = self
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
             output_shape = Tensor.get_output_shape(x, y)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -421,15 +424,12 @@ class Tensor:
     class Sub(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
-            # Set the gradient function
-            self.inputs[0].grad_fn = self
-            self.inputs[1].grad_fn = self
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
             output_shape = Tensor.get_output_shape(x, y)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -472,15 +472,12 @@ class Tensor:
     class Dot(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
-            # Set the gradient function
-            self.inputs[0].grad_fn = self
-            self.inputs[1].grad_fn = self
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
             output_shape = Tensor.get_output_shape(x, y)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -522,18 +519,63 @@ class Tensor:
             debug_print("output:", output)
             return output
 
-    class Matmul(Function):
+    class Mul(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
-            # Set the gradient function
-            self.inputs[0].grad_fn = self
-            self.inputs[1].grad_fn = self
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
             output_shape = Tensor.get_output_shape(x, y)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def _forward(self):
+            self.output.value = Tensor.Mul.mul(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+            return self.output
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def _backward(self):
+            if Tensor.auto_grad:
+                self.inputs[0].grad = Tensor.Add.add(
+                    self.inputs[0].grad, self.inputs[1].get_value() * self.output.grad
+                )
+                self.inputs[1].grad = Tensor.Add.add(
+                    self.inputs[1].grad, self.inputs[0].get_value() * self.output.grad
+                )
+            else:
+                raise Exception("Backward should only be called with auto_grad=True")
+
+        @staticmethod
+        def mul(
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("mul x:", x)
+            debug_print("mul y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the multiplication
+            output = x * y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class Matmul(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y)
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -572,6 +614,8 @@ class Tensor:
             if isinstance(y, Tensor):
                 y = y.get_value()
             # Perform the matrix multiplication
+            print("x.shape:", x.shape)
+            print("y.shape:", y.shape)
             output = x @ y
             if not isinstance(output, np.ndarray):
                 # Must be a scalar
@@ -583,14 +627,12 @@ class Tensor:
         def __init__(self, inputs):
             super().__init__(inputs)
             # Set the gradient function
-            self.inputs[0].grad_fn = self
-            self.inputs[1].grad_fn = self
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
             output_shape = Tensor.get_output_shape(x, y)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -639,13 +681,11 @@ class Tensor:
     class Neg(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
-            # Set the gradient function
-            self.inputs[0].grad_fn = self
             x = self.inputs[0]
-            output_tensor_type = Tensor.get_output_tensor_type(x)
-            output_shape = Tensor.get_output_shape(x)
-            self.output = output_tensor_type(shape=output_shape)
-            self.output.grad_fn = self
+            output_tensor_type = type(x)
+            output_dtype = output_tensor_type.default_dtype
+            output_shape = x.shape
+            self.output = output_tensor_type(np.zeros(output_shape, dtype=output_dtype))
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -677,31 +717,66 @@ class Tensor:
         return Tensor.Add([self, other])()
 
     def __radd__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Add([other, self])()
+        return other + self
 
     def __sub__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
         return Tensor.Sub([self, other])()
 
     def __rsub__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Sub([other, self])()
+        return other - self
 
     def __mul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Dot([self, other])()
+        return Tensor.Mul([self, other])()
 
     def __rmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Dot([other, self])()
+        return other * self
 
     def __truediv__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
         return Tensor.Div([self, other])()
 
     def __rtruediv__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Div([other, self])()
+        return other / self
 
     def __matmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Matmul([self, other])()
+        # Perform the dot product for vectors and matrix multiplication for matrices
+        if len(self.shape) == 1 and len(other.shape) == 1:
+            return Tensor.Dot([self, other])()
+        else:
+            return Tensor.Matmul([self, other])()
 
     def __rmatmul__(self, other: Union["Tensor", np.ndarray, int, float]) -> "Tensor":
-        return Tensor.Matmul([other, self])()
+        return other @ self
 
     def __neg__(self) -> "Tensor":
         return Tensor.Neg([self])()
+
+
+class Scalar(Tensor):
+    class InvalidScalarOperation(Exception):
+        # Takes the function name and exception is "Cannot __func__ a scalar"
+        def __init__(self, func_name: str):
+            super().__init__(f"Cannot {func_name} a scalar")
+
+    def __init__(self, value: Union[np.number, int, float]):
+        super().__init__(value=value, shape=(1,))
+
+        # Undefine any operations that would reshape the tensor to become non-scalar
+        methods_to_undefine = [
+            "reshape",
+            "expand_dims",
+            "concatenate",
+            "transpose",
+            "__getitem__",
+            "__setitem__",
+        ]
+
+        # Undefine the methods
+        for method_name in methods_to_undefine:
+
+            def invalid_operation(*args, **kwargs):
+                self._raise_invalid_operation(method_name)
+
+            setattr(self, method_name, invalid_operation)
+
+    def _raise_invalid_operation(self, method_name):
+        raise Scalar.InvalidScalarOperation(method_name)

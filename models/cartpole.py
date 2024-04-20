@@ -2,6 +2,7 @@
 # We will use cartpole as the example environment
 
 import os
+from typing import Optional
 import numpy as np
 import gym
 from collections import deque
@@ -18,6 +19,7 @@ from micrograd.functions.optimizers.adam import AdamOptim
 
 from micrograd.layers.activations.relu import ReLU
 from micrograd.layers.activations.softmax import Softmax
+from micrograd.layers.activations.sigmoid import Sigmoid
 from micrograd.utils.debug_utils import debug_print
 
 
@@ -36,35 +38,170 @@ class ReplayBuffer:
 
 
 class CartPole:
-    class Model:
-        class Layer:
-            def __init__(self, input_dim, output_dim, activation):
-                self.w = Tensor(np.random.randn(input_dim, output_dim))
+    class Layer:
+        def __init__(self):
+            self.parameters = []
+
+        def __call__(self, _):
+            raise NotImplementedError
+
+        def get_trainable_params(self):
+            return self.parameters
+
+    class Linear(Layer):
+        def __init__(self, input_dim, output_dim, activation, bias=True):
+            self.w = Tensor(np.random.randn(input_dim, output_dim))
+            self.bias = bias
+            if bias:
                 self.b = Tensor(np.random.randn(output_dim))
-                self.activation = activation
+            self.activation = activation
 
-            def __call__(self, x):
-                return self.activation((x @ self.w) + self.b)()
+            super().__init__()
+            self.parameters = [self.w, self.b]
 
+        def __call__(self, x):
+            calc = x @ self.w
+            if self.bias:
+                calc += self.b
+            return self.activation(calc)()
+
+    # Reshape layer
+    class Reshape(Layer):
+        def __init__(self, shape):
+            self.shape = shape
+
+            super().__init__()
+
+        def __call__(self, x):
+            print(f"Reshaping: {x.shape} to {self.shape}")
+            return x.reshape(self.shape)
+
+    class LSTM(Layer):
         def __init__(
             self,
             input_dim,
+            hidden_size,
+            output_dim,
+            activation,
+            bias=True,
+        ):
+            self.activation = activation
+            self.hidden_size = hidden_size
+            self.bias = bias
+
+            # Initialize weights and biases for the LSTM cell
+            self.num_gates = 4
+            self.w_ih = Tensor(np.random.randn(self.num_gates * hidden_size, input_dim))
+            self.w_hh = Tensor(
+                np.random.randn(self.num_gates * hidden_size, hidden_size)
+            )
+            if bias:
+                self.b_ih = (
+                    Tensor(np.zeros((self.num_gates * hidden_size,))) if bias else None
+                )
+                self.b_hh = (
+                    Tensor(np.zeros((self.num_gates * hidden_size,))) if bias else None
+                )
+
+            # Initialize the weights and biases for the output layer
+            self.w_ho = Tensor(np.random.randn(hidden_size, output_dim))
+            if bias:
+                self.b_ho = Tensor(np.zeros((output_dim,))) if bias else None
+
+            super().__init__()
+            self.parameters = [
+                self.w_ih,
+                self.w_hh,
+                self.w_ho,
+            ]
+            if bias:
+                self.parameters.extend([self.b_ih, self.b_hh, self.b_ho])
+
+        def __call__(self, x):
+            # LSTM cell computations
+            # Get the batch size dynamically
+            seq_len, batch_size, _ = x.shape
+            # Initialize the hidden state dynamically based on the batch size
+            if not hasattr(self, "h_prev"):
+                self.h_prev = Tensor(np.zeros((seq_len, batch_size, self.hidden_size)))
+            # Initialize the cell state dynamically based on the batch size
+            if not hasattr(self, "c_prev"):
+                self.c_prev = Tensor(np.zeros((seq_len, batch_size, self.hidden_size)))
+
+            # x.shape = (seq_len, batch_size, input_dim)
+            # self.w_ih.shape = (hidden_size * num_gates, input_dim)
+            gi = x @ self.w_ih
+            gh = self.h_prev @ self.w_hh
+            if self.bias:
+                gi += self.b_ih
+                gh += self.b_hh
+
+            i_f, i_i, i_c, i_o = np.split(gi, self.num_gates, axis=2)
+            h_f, h_i, h_c, h_o = np.split(gh, self.num_gates, axis=2)
+
+            forgetgate = self.activation((i_f + h_f))
+            ingate = self.activation((i_i + h_i))
+            cellgate = (forgetgate * self.c_prev) + (ingate * np.tanh(i_c + h_c))
+            self.c_prev = cellgate
+            outgate = self.activation((i_o + h_o))
+
+            h_next = outgate * np.tanh(cellgate)
+
+            # Output layer computations
+            y_pred = h_next @ self.w_ho
+            if self.bias:
+                y_pred += self.b_ho
+
+            self.h_prev = h_next
+
+            return y_pred
+
+    class Model:
+        def __init__(
+            self,
+            input_dim,
+            lstm_hidden_size,
             hidden_dim1,
             hidden_dim2,
             output_dim,
             action_space,
+            lstm_hidden_activation=Sigmoid,
             hidden_activation=ReLU,
             output_activation=Softmax,
+            batch_size: Optional[int] = 1,
         ):
+            # Model architecture
+            # Input -> LSTM -> Hidden1 -> Hidden2 -> Output
+            seq_len = 1
             self.layers = [
-                CartPole.Model.Layer(input_dim, hidden_dim1, hidden_activation),
-                CartPole.Model.Layer(hidden_dim1, hidden_dim2, hidden_activation),
-                CartPole.Model.Layer(hidden_dim2, output_dim, output_activation),
+                CartPole.Reshape((seq_len, batch_size, input_dim)),
+                CartPole.LSTM(
+                    input_dim,
+                    lstm_hidden_size,
+                    hidden_dim1,
+                    lstm_hidden_activation,
+                ),
+                CartPole.Linear(hidden_dim1, hidden_dim2, hidden_activation),
+                CartPole.Linear(hidden_dim2, output_dim, output_activation),
             ]
-            self.parameters = [
-                param for layer in self.layers for param in [layer.w, layer.b]
-            ]
+            self.parameters = []
+            for layer in self.layers:
+                self.parameters.extend(layer.get_trainable_params())
             self.action_space = action_space
+
+            # Create a hash of the model's layers and the input dimensions
+            self.model_hash = hash(
+                (
+                    input_dim,
+                    lstm_hidden_size,
+                    hidden_dim1,
+                    hidden_dim2,
+                    output_dim,
+                    lstm_hidden_activation,
+                    hidden_activation,
+                    output_activation,
+                )
+            )
 
         def __call__(self, x):
             for layer in self.layers:
@@ -82,15 +219,20 @@ class CartPole:
             return self.action_space.sample()
 
         def save(self, path):
-            np.savez(path, *[param.value for param in self.parameters])
+            print(f"Saving model to {path}")
+            model_data = {
+                "hash": self.model_hash,
+                "parameters": [param.value for param in self.parameters],
+            }
+            np.savez(path, **model_data)
 
         def load(self, path):
-            if not os.path.exists(path):
-                print(f"Model file {path} does not exist")
-                return
-            with np.load(path) as data:
-                for param, (_, value) in zip(self.parameters, data.items()):
-                    param.value = value
+            print(f"Loading model from {path}")
+            model_data = np.load(path)
+            if model_data["hash"] != self.model_hash:
+                raise ValueError("Saved model hash doesn't match current model hash")
+            for param, saved_param in zip(self.parameters, model_data["parameters"]):
+                param.value = saved_param
 
     class ProximalPolicy:
         # Epsilon-greedy exploration strategy with adaptive epsilon
@@ -108,7 +250,7 @@ class CartPole:
                 action = self.model.get_random_action()
             else:
                 # Exploitation: choose the best action according to the current policy
-                action = Tensor(np.argmax(self.model(model_input).value)).item()
+                action = Tensor(self.model(model_input).value).item()
                 # Clip the action to be within the action space
                 action = np.clip(action, 0, self.model.action_space.n - 1)
                 # Update the performance threshold based on the current performance
@@ -141,7 +283,7 @@ class CartPole:
             os.path.dirname(self.script_path), "cartpole_best_frames.gif"
         )
         self.save_model_pass_threshold = 0.0
-        self.use_saved_model = True
+        self.use_saved_model = False
 
         self.seed = None
         if self.seed is None:
@@ -172,6 +314,7 @@ class CartPole:
         model_input_dim = self.env.observation_space.shape[0] + (
             self.num_history_features * self.num_history
         )
+        model_lstm_hidden_size = model_input_dim * 2
         model_hidden_dim1 = 32
         model_hidden_dim2 = 16
         model_output_dim = self.env.action_space.n
@@ -181,6 +324,7 @@ class CartPole:
         debug_print(f"Model output dim: {model_output_dim}")
         self.model = CartPole.Model(
             model_input_dim,
+            model_lstm_hidden_size,
             model_hidden_dim1,
             model_hidden_dim2,
             model_output_dim,
@@ -392,8 +536,8 @@ def train_cartpole():
     cart_pole = CartPole()
     # Load the saved model if it exists
     cart_pole.load_model()
-    num_episodes_per_round = 5000
-    num_rounds = 100
+    num_episodes_per_round = 1
+    num_rounds = 1
     for round_num in range(num_rounds):
         print(f"Training round {round_num}")
         cart_pole.train(num_episodes_per_round)

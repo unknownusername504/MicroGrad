@@ -723,5 +723,6 @@ def unittest_viewable_tensor():
 
 
 if __name__ == "__main__":
+    # TODO: Move this to unittests
     View.test()
     unittest_viewable_tensor()
