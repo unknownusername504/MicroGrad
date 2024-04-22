@@ -5,13 +5,8 @@ from typing import List, Optional, Union, Tuple
 import unittest
 
 import numpy as np
-from micrograd.tensors.tensor import Tensor
+from micrograd.tensors.tensor import Tensor, ScalarLike, TensorLike
 from micrograd.utils.debug_utils import debug_print
-
-# Define "Variable" type as Union[np.number, int, float]
-Variable = Union[np.number, int, float]
-# Define "TensorLike" type as Union[np.ndarray, List[Variable], Tensor]
-TensorLike = Union[np.ndarray, List[Variable], Tensor]
 
 
 class View:
@@ -432,13 +427,13 @@ class ViewableTensor(Tensor):
     def __setitem__(
         self,
         key: Union[int, View],
-        value: Union[TensorLike, Variable],
+        value: Union[TensorLike, ScalarLike],
     ):
         indices = self.get_indices()
         # If the key is an integer then set the value at that index
         if isinstance(key, int):
             # Check if the value is a tensor like
-            if not isinstance(value, Variable):
+            if not isinstance(value, ScalarLike):
                 assert len(value) == 1
                 value = value[0]
             self.value[indices[key]] = value
@@ -448,7 +443,7 @@ class ViewableTensor(Tensor):
                 return
 
             slices = key.to_slices()
-            if isinstance(value, Variable):
+            if isinstance(value, ScalarLike):
                 for this_slice in slices:
                     these_indices = indices[this_slice]
                     for index in these_indices:
@@ -603,7 +598,7 @@ class TestViewableTensor(unittest.TestCase):
             arr: List[int],
             viewable_tensor: ViewableTensor,
             key: Union[int, slice],
-            value: Union[Variable, TensorLike],
+            value: Union[ScalarLike, TensorLike],
         ):
             # Check for equality
             self.assertEqual(viewable_tensor.value.tolist(), arr)

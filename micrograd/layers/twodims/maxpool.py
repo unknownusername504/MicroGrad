@@ -8,6 +8,7 @@ class MaxPool2D(Function):
         super().__init__(inputs, output)
         self.stride = stride
         self.padding = padding
+        # TODO: Preallocate the output tensor
 
     def _forward(self):
         self.output.value = self.max_pool2d(
@@ -15,13 +16,14 @@ class MaxPool2D(Function):
         )
 
     def _backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.max_pool2d_grad(
-            self.inputs[0].value,
-            self.output.value,
-            self.output.grad,
-            self.stride,
-            self.padding,
-        )
+        if self.inputs[0].requires_grad:
+            self.inputs[0].grad = self.inputs[0].grad + self.max_pool2d_grad(
+                self.inputs[0].value,
+                self.output.value,
+                self.output.grad,
+                self.stride,
+                self.padding,
+            )
 
     def max_pool2d(self, x, stride, padding):
         # Get the dimensions of the input

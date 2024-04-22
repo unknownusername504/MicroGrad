@@ -11,7 +11,11 @@ class Sigmoid(Function):
         return 1 / (1 + np.exp(-x))
 
     def _forward(self):
-        return Tensor(self.sigmoid(self.input.value))
+        self.output = Tensor(self.sigmoid(self.input.value))
+
+    def sigmoid_grad(self):
+        return self.output.value * (1 - self.output.value)
 
     def _backward(self):
-        self.input.grad = self.input.grad - (self.output.value @ self.output.value)
+        if self.input.requires_grad:
+            self.input.grad = self.input.grad * self.sigmoid_grad()

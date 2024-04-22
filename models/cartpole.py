@@ -1,8 +1,9 @@
 # This will be a demo of the custom Tensor library
 # We will use cartpole as the example environment
 
+import hashlib
 import os
-from typing import Optional
+import pickle
 import numpy as np
 import gym
 from collections import deque
@@ -50,10 +51,10 @@ class CartPole:
 
     class Linear(Layer):
         def __init__(self, input_dim, output_dim, activation, bias=True):
-            self.w = Tensor(np.random.randn(input_dim, output_dim))
+            self.w = Tensor(np.random.randn(input_dim, output_dim), requires_grad=True)
             self.bias = bias
             if bias:
-                self.b = Tensor(np.random.randn(output_dim))
+                self.b = Tensor(np.random.randn(output_dim), requires_grad=True)
             self.activation = activation
 
             super().__init__()
@@ -73,13 +74,12 @@ class CartPole:
             super().__init__()
 
         def __call__(self, x):
-            print(f"Reshaping: {x.shape} to {self.shape}")
             return x.reshape(self.shape)
 
     class LSTM(Layer):
         def __init__(
             self,
-            input_dim,
+            num_features,
             hidden_size,
             output_dim,
             activation,
@@ -91,22 +91,42 @@ class CartPole:
 
             # Initialize weights and biases for the LSTM cell
             self.num_gates = 4
-            self.w_ih = Tensor(np.random.randn(self.num_gates * hidden_size, input_dim))
+            self.num_layers = 1
+            # Have to transpose the weights to match the input shape and perform auto grad
+            self.w_ih = Tensor(
+                np.random.randn(num_features, self.num_gates * hidden_size),
+                requires_grad=True,
+            )
             self.w_hh = Tensor(
-                np.random.randn(self.num_gates * hidden_size, hidden_size)
+                np.random.randn(hidden_size, self.num_gates * hidden_size),
+                requires_grad=True,
             )
             if bias:
                 self.b_ih = (
-                    Tensor(np.zeros((self.num_gates * hidden_size,))) if bias else None
+                    Tensor(
+                        np.zeros((self.num_gates * hidden_size,)), requires_grad=True
+                    )
+                    if bias
+                    else None
                 )
                 self.b_hh = (
-                    Tensor(np.zeros((self.num_gates * hidden_size,))) if bias else None
+                    Tensor(
+                        np.zeros((self.num_gates * hidden_size,)), requires_grad=True
+                    )
+                    if bias
+                    else None
                 )
 
             # Initialize the weights and biases for the output layer
-            self.w_ho = Tensor(np.random.randn(hidden_size, output_dim))
+            self.w_ho = Tensor(
+                np.random.randn(hidden_size, output_dim), requires_grad=True
+            )
             if bias:
-                self.b_ho = Tensor(np.zeros((output_dim,))) if bias else None
+                self.b_ho = (
+                    Tensor(np.zeros((output_dim,)), requires_grad=True)
+                    if bias
+                    else None
+                )
 
             super().__init__()
             self.parameters = [
@@ -120,32 +140,37 @@ class CartPole:
         def __call__(self, x):
             # LSTM cell computations
             # Get the batch size dynamically
-            seq_len, batch_size, _ = x.shape
+            batch_size = x.shape[1]
             # Initialize the hidden state dynamically based on the batch size
             if not hasattr(self, "h_prev"):
-                self.h_prev = Tensor(np.zeros((seq_len, batch_size, self.hidden_size)))
+                self.h_prev = Tensor(
+                    np.zeros((self.num_layers, batch_size, self.hidden_size))
+                )
             # Initialize the cell state dynamically based on the batch size
             if not hasattr(self, "c_prev"):
-                self.c_prev = Tensor(np.zeros((seq_len, batch_size, self.hidden_size)))
+                self.c_prev = Tensor(
+                    np.zeros((self.num_layers, batch_size, self.hidden_size))
+                )
 
-            # x.shape = (seq_len, batch_size, input_dim)
-            # self.w_ih.shape = (hidden_size * num_gates, input_dim)
             gi = x @ self.w_ih
             gh = self.h_prev @ self.w_hh
             if self.bias:
                 gi += self.b_ih
                 gh += self.b_hh
 
-            i_f, i_i, i_c, i_o = np.split(gi, self.num_gates, axis=2)
-            h_f, h_i, h_c, h_o = np.split(gh, self.num_gates, axis=2)
+            i_f, i_i, i_c, i_o = Tensor.split(gi, self.num_gates, axis=2)
+            h_f, h_i, h_c, h_o = Tensor.split(gh, self.num_gates, axis=2)
 
-            forgetgate = self.activation((i_f + h_f))
-            ingate = self.activation((i_i + h_i))
-            cellgate = (forgetgate * self.c_prev) + (ingate * np.tanh(i_c + h_c))
+            # TODO: Replace np.tanh with function Tanh
+            forgetgate = self.activation((i_f + h_f))()
+            ingate = self.activation((i_i + h_i))()
+            cellgate = (forgetgate * self.c_prev) + (
+                ingate * Tensor(np.tanh((i_c + h_c).value))
+            )
             self.c_prev = cellgate
-            outgate = self.activation((i_o + h_o))
+            outgate = self.activation((i_o + h_o))()
 
-            h_next = outgate * np.tanh(cellgate)
+            h_next = outgate * Tensor(np.tanh(cellgate.value))
 
             # Output layer computations
             y_pred = h_next @ self.w_ho
@@ -159,30 +184,30 @@ class CartPole:
     class Model:
         def __init__(
             self,
-            input_dim,
-            lstm_hidden_size,
-            hidden_dim1,
-            hidden_dim2,
+            num_features,
+            lstm_dim,
+            dense_dims,
             output_dim,
             action_space,
             lstm_hidden_activation=Sigmoid,
             hidden_activation=ReLU,
             output_activation=Softmax,
-            batch_size: Optional[int] = 1,
         ):
             # Model architecture
             # Input -> LSTM -> Hidden1 -> Hidden2 -> Output
+            batch_size = 1
             seq_len = 1
             self.layers = [
-                CartPole.Reshape((seq_len, batch_size, input_dim)),
+                CartPole.Reshape((seq_len, batch_size, num_features)),
                 CartPole.LSTM(
-                    input_dim,
-                    lstm_hidden_size,
-                    hidden_dim1,
+                    num_features,
+                    lstm_dim,
+                    dense_dims[0],
                     lstm_hidden_activation,
                 ),
-                CartPole.Linear(hidden_dim1, hidden_dim2, hidden_activation),
-                CartPole.Linear(hidden_dim2, output_dim, output_activation),
+                CartPole.Linear(dense_dims[0], dense_dims[1], hidden_activation),
+                CartPole.Linear(dense_dims[1], output_dim, output_activation),
+                CartPole.Reshape((output_dim,)),
             ]
             self.parameters = []
             for layer in self.layers:
@@ -190,18 +215,17 @@ class CartPole:
             self.action_space = action_space
 
             # Create a hash of the model's layers and the input dimensions
-            self.model_hash = hash(
-                (
-                    input_dim,
-                    lstm_hidden_size,
-                    hidden_dim1,
-                    hidden_dim2,
-                    output_dim,
-                    lstm_hidden_activation,
-                    hidden_activation,
-                    output_activation,
-                )
+            model_parameters = (
+                num_features,
+                lstm_dim,
+                dense_dims[0],
+                dense_dims[1],
+                output_dim,
+                lstm_hidden_activation,
+                hidden_activation,
+                output_activation,
             )
+            self.model_hash = CartPole.Model.create_model_hash(model_parameters)
 
         def __call__(self, x):
             for layer in self.layers:
@@ -218,21 +242,26 @@ class CartPole:
         def get_random_action(self):
             return self.action_space.sample()
 
+        @staticmethod
+        def create_model_hash(model_parameters):
+            model_parameters_string = "".join(str(param) for param in model_parameters)
+            return hashlib.sha256(model_parameters_string.encode()).hexdigest()
+
         def save(self, path):
             print(f"Saving model to {path}")
             model_data = {
                 "hash": self.model_hash,
-                "parameters": [param.value for param in self.parameters],
+                "parameters": [pickle.dumps(param.value) for param in self.parameters],
             }
             np.savez(path, **model_data)
 
         def load(self, path):
             print(f"Loading model from {path}")
-            model_data = np.load(path)
+            model_data = np.load(path, allow_pickle=True)
             if model_data["hash"] != self.model_hash:
                 raise ValueError("Saved model hash doesn't match current model hash")
             for param, saved_param in zip(self.parameters, model_data["parameters"]):
-                param.value = saved_param
+                param.value = pickle.loads(saved_param)
 
     class ProximalPolicy:
         # Epsilon-greedy exploration strategy with adaptive epsilon
@@ -250,16 +279,15 @@ class CartPole:
                 action = self.model.get_random_action()
             else:
                 # Exploitation: choose the best action according to the current policy
-                action = Tensor(self.model(model_input).value).item()
-                # Clip the action to be within the action space
-                action = np.clip(action, 0, self.model.action_space.n - 1)
+                action = np.argmax(self.model(model_input).value)
                 # Update the performance threshold based on the current performance
                 self.performance_threshold = max(
                     self.performance_threshold, performance
                 )
 
             # Adjust epsilon based on performance
-            if performance > self.performance_threshold:
+            # FIXME: How do I handle the performance threshold?
+            if performance > (self.performance_threshold * 0.9):
                 self.epsilon *= self.epsilon_decay
             else:
                 self.epsilon /= self.epsilon_decay
@@ -269,7 +297,7 @@ class CartPole:
 
             return action
 
-    def __init__(self):
+    def __init__(self, do_load_model=False, do_save_model=False):
         self.do_render = False
         self.save_best_train_frames = True
 
@@ -283,7 +311,8 @@ class CartPole:
             os.path.dirname(self.script_path), "cartpole_best_frames.gif"
         )
         self.save_model_pass_threshold = 0.0
-        self.use_saved_model = False
+        self.do_load_model = do_load_model
+        self.do_save_model = do_save_model
 
         self.seed = None
         if self.seed is None:
@@ -292,65 +321,79 @@ class CartPole:
         np.random.seed(self.seed)
         random.seed(self.seed)
         self.env = gym.make("CartPole-v1", render_mode="rgb_array")
+        self.num_actions = int(np.prod(self.env.action_space.shape))
+        self.num_observations = int(np.prod(self.env.observation_space.shape))
         debug_print("Initialized environment")
 
+        self.hyperparameters = {
+            "num_history": 4,
+            "num_history_features": int(
+                self.num_actions + self.num_observations + 1
+            ),  # History of observation, action, and reward as well as the current observation
+            "base_gamma": 0.99,  # Attenuation factor for the reward
+            "base_gamma_decay": 0.999,  # Decay factor for the gamma value
+            "target_steps": 200,
+            "lr_adjustment_frequency": 999,  # Number of epochs to adjust the learning rate
+            "model_lstm_dim": 16,
+            "model_dense_dim1": 16,
+            "model_dense_dim2": 8,
+            "optimizer_lr_max": 1e-5,
+            "optimizer_lr_min": 1e-5,
+            "optimizer_lr_decay_min": 1.0,
+            "optimizer_lr_decay_max": 1.0,
+            "lr_adjustment_rate": 1.0,
+        }
+
         # Last n actions, rewards, and gamma values
-        self.num_history = 2
-        self.num_history_features = 3
-        self.history = deque(maxlen=self.num_history)
+        self.history = deque(maxlen=self.hyperparameters["num_history"])
 
-        self.base_gamma = 0.99
         # Init gamma
-        self.gamma = self.base_gamma
         # Gamma will be attenuated in order to increase the importance of future rewards as the model learns
-        self.base_gamma_decay = 0.96875
+        self.gamma = self.hyperparameters["base_gamma"]
 
-        self.reset_env(self.seed, num_epochs=0)
+        self.reset_env(self.seed, num_episodes=0)
         self.avg_steps = 0.0
-        self.target_steps = 100
-        # Number of epochs to adjust the learning rate
-        self.lr_adjustment_frequency = 10
 
-        model_input_dim = self.env.observation_space.shape[0] + (
-            self.num_history_features * self.num_history
+        model_num_features = (
+            self.hyperparameters["num_history_features"]
+            * self.hyperparameters["num_history"]
         )
-        model_lstm_hidden_size = model_input_dim * 2
-        model_hidden_dim1 = 32
-        model_hidden_dim2 = 16
-        model_output_dim = self.env.action_space.n
-        debug_print(f"Model input dim: {model_input_dim}")
-        debug_print(f"Model hidden dim1: {model_hidden_dim1}")
-        debug_print(f"Model hidden dim2: {model_hidden_dim2}")
-        debug_print(f"Model output dim: {model_output_dim}")
+        model_output_dim = self.num_actions
         self.model = CartPole.Model(
-            model_input_dim,
-            model_lstm_hidden_size,
-            model_hidden_dim1,
-            model_hidden_dim2,
+            model_num_features,
+            self.hyperparameters["model_lstm_dim"],
+            [
+                self.hyperparameters["model_dense_dim1"],
+                self.hyperparameters["model_dense_dim2"],
+            ],
             model_output_dim,
             self.env.action_space,
         )
 
-        self.optimizer_lr_max = 1e-4
-        self.optimizer_lr_min = 1e-6
-        self.optimizer_lr_decay_min = 0.99
-        self.optimizer_lr_decay_max = 0.96875
+        # Load the saved model if it exists
+        self.load_model()
+
         # Time decay learning rate, targeting 100 steps to reach the minimum learning rate
         self.optimizer_lr_decay = (
-            self.optimizer_lr_max - self.optimizer_lr_min
-        ) / self.target_steps
-        self.optimizer_lr = self.optimizer_lr_max
+            self.hyperparameters["optimizer_lr_max"]
+            - self.hyperparameters["optimizer_lr_min"]
+        ) / self.hyperparameters["target_steps"]
+        # Set to the middle of the learning rate range
+        self.optimizer_lr = (
+            self.hyperparameters["optimizer_lr_max"]
+            + self.hyperparameters["optimizer_lr_min"]
+        ) / 2.0
         # Defining lr_decay not necessary in ctor as it is set in setup_lr_adjustment
         self.optimizer = AdamOptim(
             self.model.get_parameters(),
             lr=self.optimizer_lr,
         )
         self.optimizer.setup_lr_adjustment(
-            lr_adjustment_rate=1.0,
-            optimizer_lr_min=self.optimizer_lr_min,
-            optimizer_lr_max=self.optimizer_lr_max,
-            optimizer_lr_decay_min=self.optimizer_lr_decay_min,
-            optimizer_lr_decay_max=self.optimizer_lr_decay_max,
+            lr_adjustment_rate=self.hyperparameters["lr_adjustment_rate"],
+            optimizer_lr_min=self.hyperparameters["optimizer_lr_min"],
+            optimizer_lr_max=self.hyperparameters["optimizer_lr_max"],
+            optimizer_lr_decay_min=self.hyperparameters["optimizer_lr_decay_min"],
+            optimizer_lr_decay_max=self.hyperparameters["optimizer_lr_decay_max"],
         )
 
         self.loss = lambda y_pred, y_true: CrossEntropyLoss(y_pred, y_true)()
@@ -379,35 +422,38 @@ class CartPole:
         except Exception as e:
             print(f"Error saving GIF: {e}")
 
-    def reset_env(self, seed=None, num_epochs=None):
+    def reset_env(self, seed=None, num_episodes=None):
         debug_print("Resetting environment")
-        if num_epochs is not None:
-            self.num_epochs = num_epochs
+        if num_episodes is not None:
+            self.num_episodes = num_episodes
         num_steps = self.env._elapsed_steps
-        if num_steps is not None:
+        if num_steps is not None and self.mode == "train":
             self.avg_steps = 0.05 * num_steps + (1 - 0.05) * self.avg_steps
             # Adjust the learning rate and decay less frequently
-            if self.num_epochs % self.lr_adjustment_frequency == 0:
+            if self.num_episodes % self.hyperparameters["lr_adjustment_frequency"] == 0:
                 self.optimizer.adjust_learning_rate(
-                    num_steps, self.avg_steps, self.target_steps
+                    num_steps, self.avg_steps, self.hyperparameters["target_steps"]
                 )
         observation, _ = self.env.reset(seed=seed)
         self.reward = 0
         # Running average of the rewards
         self.running_reward = 0.0
         # Reset the gamma value, help the model keep focus on long term by adjusting the decay based on the delta achieved
-        gamma_delta = self.base_gamma - self.gamma
-        self.gamma = self.base_gamma
-        self.gamma_decay = self.base_gamma_decay - (gamma_delta / 2.0)
+        gamma_delta = self.hyperparameters["base_gamma"] - self.gamma
+        self.gamma = self.hyperparameters["base_gamma"]
+        self.gamma_decay = self.hyperparameters["base_gamma_decay"] - (
+            gamma_delta / 2.0
+        )
         self.history.clear()
-        # Initialize the history with zeros which represent no action and no reward
-        for _ in range(self.num_history):
-            empty_history = np.zeros(self.num_history_features)
-            # Set the gamma value to the current gamma
-            empty_history[-1] = self.gamma
-            self.history.append(Tensor(np.zeros(self.num_history_features)))
-        history = np.concatenate([h.value for h in self.history])
-        self.state = Tensor(np.concatenate((observation, history)))
+        # Initialize the history with random observations
+        for _ in range(self.hyperparameters["num_history"] - 1):
+            self.history.append(
+                np.random.randn(self.hyperparameters["num_history_features"])
+            )
+        self.history.append(
+            np.concatenate([observation, np.random.randn(self.num_actions + 1)])
+        )
+        self.state = Tensor(np.concatenate([h for h in self.history]))
         self.model_input = self.state
         self.model_output = None
         self.done = False
@@ -423,9 +469,8 @@ class CartPole:
         # Attenuate the gamma value
         self.gamma *= self.gamma_decay
         # Update the history with the current action and reward
-        self.history.append(Tensor(np.array([action, reward, self.gamma])))
-        history = np.concatenate([h.value for h in self.history])
-        self.state = Tensor(np.concatenate((observation, history)))
+        self.history.append(np.concatenate([observation, [action, reward]]))
+        self.state = Tensor(np.concatenate([h for h in self.history]))
         self.model_input = self.state
         debug_print(f"Terminated: {terminated}, Truncated: {truncated}")
         self.done = terminated or truncated
@@ -455,12 +500,11 @@ class CartPole:
             self.update_model(action)
 
     def save_model(self):
-        print(f"Saving model to {self.model_save_path}")
-        self.model.save(self.model_save_path)
+        if self.do_save_model:
+            self.model.save(self.model_save_path)
 
     def load_model(self):
-        if self.use_saved_model:
-            print(f"Loading model from {self.model_save_path}")
+        if self.do_load_model:
             self.model.load(self.model_save_path)
 
     def train(
@@ -468,16 +512,19 @@ class CartPole:
         num_episodes,
         batch_size=16,
         sample_freq=4,
-        steps_to_pass=100,
         num_pass_early_stop=10,
     ):
+        self.mode = "train"
         buffer = ReplayBuffer(capacity=(batch_size * sample_freq * 4))
         pass_streak = 0
         with Tensor.with_auto_grad(True):
             for _ in tqdm(range(num_episodes)):
                 self.reset_env()
+                self.num_episodes += 1
                 sample_cnt = 0
-                while not self.done and (self.env._elapsed_steps < steps_to_pass):
+                while not self.done and (
+                    self.env._elapsed_steps < self.hyperparameters["target_steps"]
+                ):
                     self.render()
                     action = self.choose_action()
                     buffer.push(self.state, action, self.reward, self.done)
@@ -489,7 +536,7 @@ class CartPole:
                         and (len(buffer) >= batch_size)
                     ):
                         self.update_model_from_buffer(buffer, batch_size)
-                if self.env._elapsed_steps < steps_to_pass:
+                if self.env._elapsed_steps < self.hyperparameters["target_steps"]:
                     pass_streak = 0
                 else:
                     pass_streak += 1
@@ -499,7 +546,8 @@ class CartPole:
                         )
                         break
 
-    def test(self, num_episodes, steps_to_pass=100):
+    def test(self, num_episodes):
+        self.mode = "test"
         with Tensor.with_auto_grad(False):
             best_num_steps = 0
             pass_fail = []
@@ -507,7 +555,9 @@ class CartPole:
             for _ in tqdm(range(num_episodes)):
                 self.reset_env()
                 this_frames = []
-                while not self.done and (self.env._elapsed_steps < steps_to_pass):
+                while not self.done and (
+                    self.env._elapsed_steps < self.hyperparameters["target_steps"]
+                ):
                     frame = self.render()
                     this_frames.append(frame)
                     action = self.choose_action()
@@ -516,7 +566,7 @@ class CartPole:
                     best_num_steps = self.env._elapsed_steps
                     if self.save_best_train_frames:
                         frames = this_frames
-                if self.env._elapsed_steps < steps_to_pass:
+                if self.env._elapsed_steps < self.hyperparameters["target_steps"]:
                     debug_print("Test episode finished in failure")
                     pass_fail.append(0)
                 else:
@@ -533,11 +583,9 @@ class CartPole:
 
 
 def train_cartpole():
-    cart_pole = CartPole()
-    # Load the saved model if it exists
-    cart_pole.load_model()
-    num_episodes_per_round = 1
-    num_rounds = 1
+    cart_pole = CartPole(do_load_model=True, do_save_model=True)
+    num_episodes_per_round = 100
+    num_rounds = 50
     for round_num in range(num_rounds):
         print(f"Training round {round_num}")
         cart_pole.train(num_episodes_per_round)

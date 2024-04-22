@@ -8,6 +8,7 @@ class Conv2D(Function):
         super().__init__(inputs, output)
         self.stride = stride
         self.padding = padding
+        # TODO: Preallocate the output tensor
 
     def _forward(self):
         self.output.value = self.conv2d(
@@ -15,20 +16,22 @@ class Conv2D(Function):
         )
 
     def _backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.conv2d_grad(
-            self.inputs[0].value,
-            self.inputs[1].value,
-            self.output.grad,
-            self.stride,
-            self.padding,
-        )
-        self.inputs[1].grad = self.inputs[1].grad + self.conv2d_grad(
-            self.inputs[1].value,
-            self.inputs[0].value,
-            self.output.grad,
-            self.stride,
-            self.padding,
-        )
+        if self.inputs[0].requires_grad:
+            self.inputs[0].grad = self.inputs[0].grad + self.conv2d_grad(
+                self.inputs[0].value,
+                self.inputs[1].value,
+                self.output.grad,
+                self.stride,
+                self.padding,
+            )
+        if self.inputs[1].requires_grad:
+            self.inputs[1].grad = self.inputs[1].grad + self.conv2d_grad(
+                self.inputs[1].value,
+                self.inputs[0].value,
+                self.output.grad,
+                self.stride,
+                self.padding,
+            )
 
     def conv2d(self, x, w, stride, padding):
         # Get the dimensions of the input

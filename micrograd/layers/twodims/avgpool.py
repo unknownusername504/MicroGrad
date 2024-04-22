@@ -8,6 +8,7 @@ class AvgPool2D(Function):
         super().__init__(inputs, output)
         self.stride = stride
         self.padding = padding
+        # TODO: Preallocate the output tensor
 
     def _forward(self):
         self.output.value = self.avg_pool2d(
@@ -15,9 +16,10 @@ class AvgPool2D(Function):
         )
 
     def _backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.avg_pool2d_grad(
-            self.inputs[0].value, self.output.grad, self.stride, self.padding
-        )
+        if self.inputs[0].requires_grad:
+            self.inputs[0].grad = self.inputs[0].grad + self.avg_pool2d_grad(
+                self.inputs[0].value, self.output.grad, self.stride, self.padding
+            )
 
     def avg_pool2d(self, x, stride, padding):
         # Get the dimensions of the input

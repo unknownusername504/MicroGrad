@@ -10,11 +10,14 @@ class ReLU(Function):
     def relu(self, x):
         return np.maximum(x, 0)
 
-    def relu_grad(self, x):
-        return np.where(x > 0, 1, 0)
-
     def _forward(self):
-        return Tensor(self.relu(self.input.value))
+        self.output = Tensor(
+            self.relu(self.input.value), requires_grad=self.input.requires_grad
+        )
+
+    def relu_grad(self):
+        return np.where(self.output.value > 0, 1, 0)
 
     def _backward(self):
-        self.input.grad = self.input.grad + self.relu_grad(self.input.value)
+        if self.input.requires_grad:
+            self.input.grad = self.input.grad * self.relu_grad()

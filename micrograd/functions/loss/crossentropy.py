@@ -1,6 +1,6 @@
 import numpy as np
 
-from micrograd.tensors.tensor import Function
+from micrograd.tensors.tensor import Function, Tensor
 
 
 class CrossEntropyLoss(Function):
@@ -14,12 +14,19 @@ class CrossEntropyLoss(Function):
         return -dy * t / y.shape[0]
 
     def _forward(self):
-        return self.cross_entropy(self.inputs[0].value, self.inputs[1].value)
+        self.output = Tensor(
+            self.cross_entropy(self.inputs[0].value, self.inputs[1].value),
+            requires_grad=(
+                self.inputs[0].requires_grad or self.inputs[1].requires_grad
+            ),
+        )
 
     def _backward(self):
-        self.inputs[0].grad = self.inputs[0].grad + self.cross_entropy_grad(
-            self.inputs[0].value, self.inputs[1].value, self.output.grad
-        )
-        self.inputs[1].grad = self.inputs[1].grad + self.cross_entropy_grad(
-            self.inputs[1].value, self.inputs[0].value, self.output.grad
-        )
+        if self.inputs[0].requires_grad:
+            self.inputs[0].grad = self.inputs[0].grad + self.cross_entropy_grad(
+                self.inputs[0].value, self.inputs[1].value, self.output.grad
+            )
+        if self.inputs[1].requires_grad:
+            self.inputs[1].grad = self.inputs[1].grad + self.cross_entropy_grad(
+                self.inputs[1].value, self.inputs[0].value, self.output.grad
+            )
