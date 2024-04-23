@@ -222,7 +222,11 @@ class Tensor:
     @staticmethod
     def calculate_matmul_shape(x_shape: Tuple[int], y_shape: Tuple[int]) -> Tuple[int]:
         # Determine the maximum dimensionality
-        assert x_shape[-1] == y_shape[0]
+        assert (
+            x_shape[-1] == y_shape[0]
+        ), "Incompatible shapes for matmul with shapes {} and {}".format(
+            x_shape, y_shape
+        )
 
         # Calculate the broadcasted shape element-wise
         return tuple(x_shape[:-1] + y_shape[1:])
