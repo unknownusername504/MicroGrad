@@ -85,6 +85,7 @@ class CartPole:
             activation,
             bias=True,
         ):
+            self.num_features = num_features
             self.activation = activation
             self.hidden_size = hidden_size
             self.bias = bias
@@ -138,7 +139,7 @@ class CartPole:
                 self.parameters.extend([self.b_ih, self.b_hh, self.b_ho])
 
             self.h_prev = Tensor(np.zeros((self.num_layers, self.hidden_size)))
-            self.c_prev = Tensor(np.zeros((self.num_gates, self.hidden_size)))
+            self.c_prev = Tensor(np.zeros((self.num_features, self.hidden_size)))
 
         def __call__(self, x):
             # LSTM cell computations
@@ -358,17 +359,17 @@ class CartPole:
         debug_print("Initialized environment")
 
         self.hyperparameters = {
-            "num_history": 4,
+            "num_history": 6,
             "num_history_features": int(
                 self.num_observations + 2
             ),  # History of observation, action, and reward as well as the current observation
             "base_discount_factor": 0.99,  # Attenuation factor for the reward
             "base_discount_factor_decay": 0.95,  # Decay factor for the discount factor
-            "target_steps": 200,
-            "model_lstm_dim": 16,
-            "model_dense_dim1": 32,
-            "model_dense_dim2": 8,
-            "optimizer_lr": 1e-5,
+            "target_steps": 100,
+            "model_lstm_dim": 32,
+            "model_dense_dim1": 64,
+            "model_dense_dim2": 16,
+            "optimizer_lr": 1e-3,
         }
 
         # Last n actions, rewards, and discount_factor values
