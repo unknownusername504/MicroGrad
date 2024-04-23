@@ -7,9 +7,13 @@ from micrograd.unittests.op_unittests import *
 from micrograd.unittests.run_unittests import *
 from micrograd.utils.debug_utils import *
 from micrograd.layers.flatten import *
-from micrograd.layers.activations.relu import *
-from micrograd.layers.activations.sigmoid import *
-from micrograd.layers.activations.softmax import *
+from micrograd.layers.layer import *
+from micrograd.layers.linear import *
+from micrograd.layers.reshape import *
+from micrograd.layers.lstm import *
+from micrograd.functions.activations.relu import *
+from micrograd.functions.activations.sigmoid import *
+from micrograd.functions.activations.softmax import *
 from micrograd.layers.twodims.avgpool import *
 from micrograd.layers.twodims.conv import *
 from micrograd.layers.twodims.maxpool import *

@@ -13,14 +13,14 @@ import cv2
 import imageio
 from tqdm import tqdm
 
+from micrograd.utils.debug_utils import debug_print
+
 from micrograd.tensors.tensor import Tensor
 
 from micrograd.functions.loss.crossentropy import CrossEntropyLoss
 from micrograd.functions.optimizers.adam import AdamOptim
-
-from micrograd.layers.activations.relu import ReLU
-from micrograd.layers.activations.sigmoid import Sigmoid
-from micrograd.utils.debug_utils import debug_print
+from micrograd.functions.activations.relu import ReLU
+from micrograd.functions.activations.sigmoid import Sigmoid
 
 from micrograd.layers.linear import Linear
 from micrograd.layers.lstm import LSTM
