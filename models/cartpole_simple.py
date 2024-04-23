@@ -19,9 +19,12 @@ from micrograd.functions.loss.crossentropy import CrossEntropyLoss
 from micrograd.functions.optimizers.adam import AdamOptim
 
 from micrograd.layers.activations.relu import ReLU
-from micrograd.layers.activations.softmax import Softmax
 from micrograd.layers.activations.sigmoid import Sigmoid
 from micrograd.utils.debug_utils import debug_print
+
+from micrograd.layers.linear import Linear
+from micrograd.layers.lstm import LSTM
+from micrograd.layers.reshape import Reshape
 
 
 class ReplayBuffer:
@@ -39,137 +42,6 @@ class ReplayBuffer:
 
 
 class CartPole:
-    class Layer:
-        def __init__(self):
-            self.parameters = []
-
-        def __call__(self, _):
-            raise NotImplementedError
-
-        def get_trainable_params(self):
-            return self.parameters
-
-    class Linear(Layer):
-        def __init__(self, input_dim, output_dim, activation, bias=True):
-            self.w = Tensor(np.random.randn(input_dim, output_dim), requires_grad=True)
-            self.bias = bias
-            if bias:
-                self.b = Tensor(np.random.randn(output_dim), requires_grad=True)
-            self.activation = activation
-
-            super().__init__()
-            self.parameters = [self.w, self.b]
-
-        def __call__(self, x):
-            calc = x @ self.w
-            if self.bias:
-                calc += self.b
-            return self.activation(calc)()
-
-    # Reshape layer
-    class Reshape(Layer):
-        def __init__(self, shape):
-            self.shape = shape
-
-            super().__init__()
-
-        def __call__(self, x):
-            return x.reshape(self.shape)
-
-    class LSTM(Layer):
-        def __init__(
-            self,
-            num_features,
-            hidden_size,
-            output_dim,
-            activation,
-            bias=True,
-        ):
-            self.num_features = num_features
-            self.activation = activation
-            self.hidden_size = hidden_size
-            self.bias = bias
-
-            # Initialize weights and biases for the LSTM cell
-            self.num_gates = 4
-            self.num_layers = 1
-            # Have to transpose the weights to match the input shape and perform auto grad
-            self.w_ih = Tensor(
-                np.random.randn(num_features, self.num_gates * hidden_size),
-                requires_grad=True,
-            )
-            self.w_hh = Tensor(
-                np.random.randn(hidden_size, self.num_gates * hidden_size),
-                requires_grad=True,
-            )
-            if bias:
-                self.b_ih = (
-                    Tensor(
-                        np.zeros((self.num_gates * hidden_size,)), requires_grad=True
-                    )
-                    if bias
-                    else None
-                )
-                self.b_hh = (
-                    Tensor(
-                        np.zeros((self.num_gates * hidden_size,)), requires_grad=True
-                    )
-                    if bias
-                    else None
-                )
-
-            # Initialize the weights and biases for the output layer
-            self.w_ho = Tensor(
-                np.random.randn(hidden_size, output_dim), requires_grad=True
-            )
-            if bias:
-                self.b_ho = (
-                    Tensor(np.zeros((output_dim,)), requires_grad=True)
-                    if bias
-                    else None
-                )
-
-            super().__init__()
-            self.parameters = [
-                self.w_ih,
-                self.w_hh,
-                self.w_ho,
-            ]
-            if bias:
-                self.parameters.extend([self.b_ih, self.b_hh, self.b_ho])
-
-            self.h_prev = Tensor(np.zeros((self.num_layers, self.hidden_size)))
-            self.c_prev = Tensor(np.zeros((self.num_features, self.hidden_size)))
-
-        def __call__(self, x):
-            # LSTM cell computations
-            gi = x @ self.w_ih
-            gh = self.h_prev @ self.w_hh
-            if self.bias:
-                gi += self.b_ih
-                gh += self.b_hh
-
-            i_f, i_i, i_c, i_o = Tensor.split(gi, self.num_gates, axis=1)
-            h_f, h_i, h_c, h_o = Tensor.split(gh, self.num_gates, axis=1)
-
-            # TODO: Replace np.tanh with function Tanh
-            forgetgate = self.activation((i_f + h_f))()
-            ingate = self.activation((i_i + h_i))()
-            cellgate = (forgetgate * self.c_prev) + (
-                ingate * Tensor(np.tanh((i_c + h_c).value))
-            )
-            self.c_prev = cellgate
-            outgate = self.activation((i_o + h_o))()
-
-            self.h_prev = outgate * Tensor(np.tanh(cellgate.value))
-
-            # Output layer computations
-            y_pred = self.h_prev @ self.w_ho
-            if self.bias:
-                y_pred += self.b_ho
-
-            return y_pred
-
     class Model:
         def __init__(
             self,
@@ -188,17 +60,17 @@ class CartPole:
             self.layers = (
                 # Input layer
                 [
-                    CartPole.Reshape((seq_len, num_features)),
-                    CartPole.LSTM(
+                    Reshape((seq_len, num_features)),
+                    LSTM(
                         num_features,
                         lstm_dim,
                         dense_dims[0],
                         lstm_hidden_activation,
                     ),
                     # Flatten the output of the LSTM layer
-                    CartPole.Reshape((1, seq_len * dense_dims[0])),
+                    Reshape((1, seq_len * dense_dims[0])),
                     # Compress the sequence dimension using a linear layer
-                    CartPole.Linear(
+                    Linear(
                         seq_len * dense_dims[0],
                         dense_dims[0],
                         hidden_activation,
@@ -206,7 +78,7 @@ class CartPole:
                 ]
                 # Hidden layers
                 + [
-                    CartPole.Linear(
+                    Linear(
                         dense_dims[i],
                         dense_dims[i + 1],
                         hidden_activation,
@@ -215,12 +87,12 @@ class CartPole:
                 ]
                 # Output layer
                 + [
-                    CartPole.Linear(
+                    Linear(
                         dense_dims[-1],
                         output_dim,
                         output_activation,
                     ),
-                    CartPole.Reshape((output_dim,)),
+                    Reshape((output_dim,)),
                 ]
             )
             self.parameters = []
