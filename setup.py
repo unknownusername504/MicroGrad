@@ -26,6 +26,7 @@ setup(
         "tqdm",
         "opencv-python",
         "imageio",
+        "torch",
     ],
     python_requires=">=3.8",
 )

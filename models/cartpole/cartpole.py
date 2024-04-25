@@ -13,11 +13,11 @@ import cv2
 import imageio
 from tqdm import tqdm
 
+from micrograd.functions.loss.actor_critic import MeanSquaredError
 from micrograd.utils.debug_utils import debug_print
 
 from micrograd.tensors.tensor import Tensor
 
-from micrograd.functions.loss.crossentropy import CrossEntropyLoss
 from micrograd.functions.optimizers.adam import AdamOptim
 from micrograd.functions.activations.relu import ReLU
 from micrograd.functions.activations.sigmoid import Sigmoid
@@ -57,7 +57,7 @@ class CartPole:
         ):
             # Model architecture
             # Input -> LSTM -> Hidden1 -> Hidden2 ... -> Output
-            self.layers = (
+            self.actor_layers = (
                 # Input layer
                 [
                     Reshape((seq_len, num_features)),
@@ -96,7 +96,7 @@ class CartPole:
                 ]
             )
             self.parameters = []
-            for layer in self.layers:
+            for layer in self.actor_layers:
                 self.parameters.extend(layer.get_trainable_params())
             self.action_space = action_space
 
@@ -118,7 +118,7 @@ class CartPole:
             self.model_hash = CartPole.Model.create_model_hash(model_parameters)
 
         def __call__(self, x):
-            for layer in self.layers:
+            for layer in self.actor_layers:
                 x = layer(x)
             return x
 
@@ -273,7 +273,8 @@ class CartPole:
             lr=self.hyperparameters["optimizer_lr"],
         )
 
-        self.loss = lambda y_pred, y_true: CrossEntropyLoss(y_pred, y_true)()
+        # MeanSquaredError
+        self.loss = lambda y_true, y_pred: MeanSquaredError(y_true, y_pred)()
         self.policy = CartPole.AdaptiveSoftmaxPolicy()
 
     def render(self):
@@ -331,8 +332,11 @@ class CartPole:
         if self.done:
             return
         observation, reward, terminated, truncated, _ = self.env.step(action)
-        # Scale reward as we survive more steps
-        self.reward = reward / self.discount_factor
+        # Reward is the immediate reward which is scaled by the inverse of the discount factor
+        # and the running reward which is scaled by the discount factor
+        self.reward = (reward / self.discount_factor) + (
+            self.running_reward * self.discount_factor
+        )
         # Update the running reward
         per_run_weight = 0.1
         self.running_reward = (per_run_weight * self.reward) + (
