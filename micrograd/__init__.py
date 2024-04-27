@@ -1,5 +1,5 @@
 from micrograd.scheduler.schedule import *
-from micrograd.scheduler.ring_reduce import *
+from micrograd.scheduler.ring_reduce_real import *
 from micrograd.tensors.tensor import *
 from micrograd.tensors.viewable_tensor import *
 from micrograd.tensors.tensor_u8 import *
@@ -21,3 +21,6 @@ from micrograd.functions.loss.negative_log_likelihood import *
 from micrograd.layers.twodims.avgpool import *
 from micrograd.layers.twodims.conv import *
 from micrograd.layers.twodims.maxpool import *
+
+# from micrograd.models.cartpole.cartpole import *
+from micrograd.models.cartpole.simple_cartpole import *

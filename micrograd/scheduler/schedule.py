@@ -238,7 +238,8 @@ class WaveProcess:
     def terminate(self):
         # Terminate the wave process worker
         debug_print("Terminating wave process worker...")
-        self.worker.terminate()
+        if self.worker is not None:
+            self.worker.terminate()
 
     def schedule(self, func):
         # Schedule the job to the wave process worker
@@ -250,9 +251,10 @@ class WaveProcess:
 
     def __del__(self):
         # Terminate the wave process worker
-        self.worker.terminate()
-        self.worker.join()
-        self.worker.close()
+        if self.worker is not None:
+            self.worker.terminate()
+            self.worker.join()
+            self.worker.close()
         self.worker = None
 
 

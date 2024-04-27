@@ -16,6 +16,7 @@ setup(
         "micrograd.functions.optimizers",
         "micrograd.utils",
         "micrograd.scheduler",
+        "micrograd.models.cartpole",
     ],
     install_requires=[
         "numpy",
