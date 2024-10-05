@@ -6,6 +6,7 @@ from micrograd.tensors.tensor_u8 import *
 from micrograd.unittests.op_unittests import *
 from micrograd.unittests.run_unittests import *
 from micrograd.utils.debug_utils import *
+from micrograd.utils.types import *
 from micrograd.layers.flatten import *
 from micrograd.layers.layer import *
 from micrograd.layers.linear import *

@@ -1,13 +1,11 @@
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, ClassVar
 import numpy as np
-from typing import ClassVar
 
 from micrograd.utils.debug_utils import debug_print
 
-# Define "ScalarLike" type as Union[np.number, int, float, Scalar]
-ScalarLike = Union[np.number, int, float, "Scalar"]
-# Define "TensorLike" type as Union[np.ndarray, List[ScalarLike], Tensor]
-TensorLike = Union[np.ndarray, List[ScalarLike], "Tensor"]
+# TODO: Fix this garbage
+ScalarLikeForward = Union[np.number, int, float, "Scalar"]
+TensorLikeForward = Union[np.ndarray, List[ScalarLikeForward], "Tensor"]
 
 
 class Function:
@@ -53,7 +51,7 @@ class Tensor:
 
     def __init__(
         self,
-        value: Union[TensorLike, ScalarLike] = None,
+        value: Union[TensorLikeForward, ScalarLikeForward] = None,
         shape: Optional[Tuple[int]] = None,
         requires_grad: bool = False,
     ):
@@ -636,48 +634,56 @@ class Tensor:
             debug_print("output:", output)
             return output
 
-    def __add__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __add__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         return Tensor.Add([self, other])()
 
-    def __radd__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __radd__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return other + self
 
-    def __sub__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __sub__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         return Tensor.Sub([self, other])()
 
-    def __rsub__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __rsub__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return other - self
 
-    def __mul__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __mul__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         return Tensor.Mul([self, other])()
 
-    def __rmul__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __rmul__(self, other: Union[TensorLikeForward, ScalarLikeForward]) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return other * self
 
-    def __truediv__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __truediv__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return Tensor.Div([self, other])()
 
-    def __rtruediv__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __rtruediv__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return other / self
 
-    def __matmul__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __matmul__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
         # Perform the dot product for vectors and matrix multiplication for matrices
         if len(self.shape) == 1 and len(other.shape) == 1:
             return Tensor.Dot([self, other])()
         else:
             return Tensor.Matmul([self, other])()
 
-    def __rmatmul__(self, other: Union[TensorLike, ScalarLike]) -> "Tensor":
+    def __rmatmul__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
         if not isinstance(other, Tensor):
             other = Tensor(other)
         return other @ self
@@ -692,7 +698,7 @@ class Scalar(Tensor):
         def __init__(self, func_name: str):
             super().__init__(f"Cannot {func_name} a scalar")
 
-    def __init__(self, value: ScalarLike, requires_grad: bool = False):
+    def __init__(self, value: ScalarLikeForward, requires_grad: bool = False):
         super().__init__(value=value, shape=(1,), requires_grad=requires_grad)
 
         # Undefine any operations that would reshape the tensor to become non-scalar

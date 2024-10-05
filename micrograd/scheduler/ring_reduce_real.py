@@ -5,8 +5,8 @@ from typing import Dict, List, get_args
 import numpy as np
 
 from micrograd.scheduler.schedule import CoreThreadAffinityManager
-from micrograd.tensors.tensor import ScalarLike
 from micrograd.utils.debug_utils import DebugPrint, debug_print
+from micrograd.utils.types import is_scalar_like
 
 
 class RingTopology:
@@ -208,9 +208,7 @@ class Operation:
         start_index, _ = self.distributed_partials.get_partial()
         for index, partial_result in enumerate(self.this_worker_partitioned_array):
             this_base_value = self.worker_contribution_array[start_index + index]
-            assert isinstance(
-                this_base_value, get_args(ScalarLike)
-            ), "The base value is not a ScalarLike"
+            assert is_scalar_like(this_base_value), "The base value is not a ScalarLike"
             self.worker_contribution_array[start_index + index] = (
                 self.perform_primitive_op(
                     this_base_value, partial_result, is_reduce=True

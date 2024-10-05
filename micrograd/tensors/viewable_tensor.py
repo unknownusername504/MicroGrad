@@ -5,8 +5,9 @@ from typing import List, Optional, Union, Tuple
 import unittest
 
 import numpy as np
-from micrograd.tensors.tensor import Tensor, ScalarLike, TensorLike
+from micrograd.tensors.tensor import Tensor
 from micrograd.utils.debug_utils import debug_print
+from micrograd.utils.types import is_scalar_like, ScalarLike, TensorLike
 
 
 class View:
@@ -202,28 +203,6 @@ class View:
         rand_seed = 1
         np.random.seed(rand_seed)
 
-        """
-        # Test the view class
-        for _ in range(5):
-            start = np.random.randint(0, 10)
-            num_steps = np.random.randint(1, 10)
-            step_stride = np.random.randint(1, 10)
-            if step_stride > 2:
-                step_footprint = np.random.randint(1, step_stride - 1)
-            else:
-                step_footprint = 1
-            view = View(start, num_steps, step_stride, step_footprint)
-            debug_print(view)
-            slices = view.to_slices()
-            debug_print(slices)
-            # Print the values of the array that are selected by the slices
-            combined = []
-            for step in range(num_steps):
-                for tile in range(step_footprint):
-                    combined.append(index_array[slices[tile]][step])
-            debug_print(combined)
-        """
-
         # Test merging with views
         test_tiling_merge = False
         found_merges = set()
@@ -406,7 +385,7 @@ class ViewableTensor(Tensor):
         return indices
 
     # Redefine the getitem method to return a contiguous tensor
-    def __getitem__(self, key: Union[int, View]) -> "Tensor":
+    def __getitem__(self, key: Union[int, View]) -> Tensor:
         indices = self.get_indices()
         # If the key is an integer then return the value at that index
         if isinstance(key, int):
@@ -433,7 +412,7 @@ class ViewableTensor(Tensor):
         # If the key is an integer then set the value at that index
         if isinstance(key, int):
             # Check if the value is a tensor like
-            if not isinstance(value, ScalarLike):
+            if not is_scalar_like(value):
                 assert len(value) == 1
                 value = value[0]
             self.value[indices[key]] = value
@@ -443,7 +422,7 @@ class ViewableTensor(Tensor):
                 return
 
             slices = key.to_slices()
-            if isinstance(value, ScalarLike):
+            if is_scalar_like(value):
                 for this_slice in slices:
                     these_indices = indices[this_slice]
                     for index in these_indices:
@@ -460,7 +439,7 @@ class ViewableTensor(Tensor):
         else:
             raise Exception("Invalid key type")
 
-    def get_contiguous(self) -> "Tensor":
+    def get_contiguous(self) -> Tensor:
         # Return the contiguous tensor
         return self[0 : len(self)]
 

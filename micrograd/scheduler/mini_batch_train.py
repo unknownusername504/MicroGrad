@@ -9,7 +9,7 @@ def train_models_minibatched():
     num_rounds = 20
     num_episodes_per_round = 500
     # Number of cores to split across
-    num_splits = 8
+    num_splits = 6
     # Num rounds before reduce
     num_rounds_reduce = 2
     base_cart_pole = CartPole(do_load_model=True, do_save_model=True)
