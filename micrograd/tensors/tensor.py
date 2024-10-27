@@ -12,10 +12,7 @@ class Function:
     def __init__(self, inputs: List["Tensor"]):
         if len(inputs) == 0:
             raise Exception("No inputs provided")
-        elif len(inputs) == 1:
-            self.input = inputs[0]
-        else:
-            self.inputs = inputs
+        self.inputs = inputs
         self.output = None
         self.inputs_requires_grad = any([input.requires_grad for input in inputs])
 
@@ -26,8 +23,10 @@ class Function:
         raise NotImplementedError
 
     def __call__(self):
+        # This will ensure all operations for this function are done in the correct autograd context,
+        # Even if the function is called in a different context/proc
         self._forward()
-        if Tensor.auto_grad:
+        if Tensor.get_auto_grad() and self.inputs_requires_grad:
             self._backward()
         return self.output
 
@@ -38,16 +37,24 @@ class Tensor:
     auto_grad: ClassVar[bool] = False
     default_dtype: ClassVar[np.dtype] = np.float64
 
+    @staticmethod
+    def get_auto_grad():
+        return Tensor.auto_grad
+
+    @staticmethod
+    def set_auto_grad(update_auto_grad: bool):
+        Tensor.auto_grad = update_auto_grad
+
     class with_auto_grad:
-        def __init__(self, auto_grad: bool):
-            self.auto_grad = auto_grad
-            self.restore_auto_grad = Tensor.auto_grad
+        def __init__(self, update_auto_grad: bool):
+            self.update_auto_grad = update_auto_grad
+            self.restore_auto_grad = Tensor.get_auto_grad()
 
         def __enter__(self):
-            Tensor.auto_grad = self.auto_grad
+            Tensor.set_auto_grad(self.update_auto_grad)
 
         def __exit__(self, exc_type, exc_value, traceback):
-            Tensor.auto_grad = self.restore_auto_grad
+            Tensor.set_auto_grad(self.restore_auto_grad)
 
     def __init__(
         self,
@@ -55,48 +62,47 @@ class Tensor:
         shape: Optional[Tuple[int]] = None,
         requires_grad: bool = False,
     ):
-        # If the value is None then create a new numpy array of zeros
         if value is None:
             assert shape is not None
-            self.value = np.zeros(shape, dtype=Tensor.default_dtype)
+            self._create_tensor(shape)
         else:
             if isinstance(value, np.ndarray):
-                self.dtype = value.dtype
                 self.value = value
-            elif type(value) is List:
-                # TODO: Infer type from list
-                self.dtype = np.float64
-                self.value = np.array(value, dtype=self.dtype)
+            elif isinstance(value, list) or isinstance(value, List):
+                # Infer type and create array
+                arr = np.array(value, dtype=Tensor.default_dtype)
+                self.value = arr
             elif isinstance(value, Tensor):
-                self.dtype = value.dtype
                 self.value = value.value
             elif isinstance(value, np.number):
-                self.dtype = value.dtype
-                self.value = np.array([value], dtype=self.dtype)
-            elif type(value) is int:
-                self.dtype = np.int64
-                self.value = np.array([value], dtype=self.dtype)
-            elif type(value) is float:
-                self.dtype = np.float64
-                self.value = np.array([value], dtype=self.dtype)
+                self.value = np.array([value], dtype=value.dtype)
+            elif isinstance(value, int):
+                self.value = np.array([value], dtype=np.int64)
+            elif isinstance(value, float):
+                self.value = np.array([value], dtype=np.float64)
             else:
-                raise Exception("Invalid value type")
-        # If the shape is None then set the shape to the value shape
-        if shape is None:
-            self.shape = self.value.shape
-        else:
-            self.shape = shape
-            self.value = self.value.reshape(self.shape)
+                # Handle invalid types
+                raise Exception(f"Invalid value type: {type(value)}")
+
+        # Set shape if provided
+        if shape is not None:
+            self.value = self.value.reshape(shape)
+
         self.requires_grad = requires_grad
         if self.requires_grad:
             self.zero_grad()
 
-    # Function to zero the gradient
+    def _create_tensor(self, shape):
+        self.value = np.zeros(shape, dtype=Tensor.default_dtype)
+
     def zero_grad(self):
-        self.grad = np.zeros(self.shape, dtype=self.dtype)
+        if self.requires_grad:
+            self.grad = np.zeros_like(self.value, dtype=Tensor.default_dtype)
 
     # Length of the tensor
     def __len__(self):
+        if len(self.value.shape) == 0:
+            return 1
         return len(self.value)
 
     # Maximum value of the tensor
@@ -108,7 +114,6 @@ class Tensor:
         self.value = self.value.astype(dtype)
         if self.requires_grad:
             self.grad = self.grad.astype(dtype)
-        self.dtype = dtype
         return self
 
     def tolist(self):
@@ -148,22 +153,37 @@ class Tensor:
 
     # Get the shape of the tensor
     def get_shape(self):
-        return self.shape
+        return self.value.shape
+
+    @property
+    def shape(self):
+        return self.get_shape()
 
     # Get the dtype of the tensor
     def get_dtype(self):
-        return self.dtype
+        return self.value.dtype
+
+    @property
+    def dtype(self):
+        return self.get_dtype()
 
     # Get the value of the tensor
     def get_value(self):
         return self.value
+
+    @staticmethod
+    def is_flat(x: Union["Tensor", np.ndarray]):
+        value = x if isinstance(x, np.ndarray) else x.get_value()
+        # Check if the tensor is 1D or has only one non-singleton dimension
+        return len(value.shape) <= 1 or (
+            len(value.shape) > 1 and all(dim == 1 for dim in value.shape[:-1])
+        )
 
     # Flatten the tensor
     def flatten(self):
         self.value = self.value.flatten()
         if self.requires_grad:
             self.grad = self.grad.flatten()
-        self.shape = (len(self.value),)
         return self
 
     # Reshape the tensor
@@ -173,7 +193,6 @@ class Tensor:
         self.value = self.value.reshape(shape)
         if self.requires_grad:
             self.grad = self.grad.reshape(shape)
-        self.shape = shape
         return self
 
     # Transpose the tensor
@@ -183,14 +202,12 @@ class Tensor:
         self.value = self.value.transpose(axes)
         if self.requires_grad:
             self.grad = self.grad.transpose(axes)
-        self.shape = self.value.shape
         return self
 
     def expand_dims(self, axis: Union[int, Tuple[int]]):
         self.value = np.expand_dims(self.value, axis)
         if self.requires_grad:
             self.grad = np.expand_dims(self.grad, axis)
-        self.shape = self.value.shape
         return self
 
     # Join a sequence of arrays along an existing axis.
@@ -200,7 +217,6 @@ class Tensor:
         if self.requires_grad:
             tensor_grads = [tensor.grad for tensor in tensors]
             self.grad = np.concatenate([self.grad] + tensor_grads, axis=axis)
-        self.shape = self.value.shape
         return self
 
     @staticmethod
@@ -233,6 +249,8 @@ class Tensor:
     def get_output_shape(x: "Tensor", y: "Tensor", function: str) -> Tuple[int]:
         if function == "Matmul":
             return Tensor.calculate_matmul_shape(x.shape, y.shape)
+        elif function == "Dot":
+            return ()
         else:
             return Tensor.broadcast_shapes(x.shape, y.shape)
 
@@ -267,6 +285,18 @@ class Tensor:
                 return type(y)
         raise Exception("Unknown tensor type")
 
+        """
+        Summary Table of Operations
+        Operation | ∂L/∂output | ∂L/∂x | ∂L/∂y
+        Add       | 1          | 1     | 1
+        Sub       | 1          | 1     | -1
+        Dot       | 1          | y     | x
+        Mul       | y          | y     | x
+        Matmul    | 1          | y.T   | x.T
+        Div       | 1/y        | 1/y   | -x/(y^2)
+        Neg       | -1         | -1    | N/A
+        """
+
     class Add(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
@@ -289,11 +319,17 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output * 1
                 if self.inputs[0].requires_grad:
                     self.inputs[0].grad = Tensor.Add.add(
                         self.inputs[0].grad, self.output.grad
                     )
+                # ∂L/∂y = ∂L/∂output * 1
                 if self.inputs[1].requires_grad:
                     self.inputs[1].grad = Tensor.Add.add(
                         self.inputs[1].grad, self.output.grad
@@ -341,11 +377,17 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output * 1
                 if self.inputs[0].requires_grad:
                     self.inputs[0].grad = Tensor.Add.add(
                         self.inputs[0].grad, self.output.grad
                     )
+                # ∂L/∂y = ∂L/∂output * -1
                 if self.inputs[1].requires_grad:
                     self.inputs[1].grad = Tensor.Sub.sub(
                         self.inputs[1].grad, self.output.grad
@@ -374,13 +416,21 @@ class Tensor:
     class Dot(Function):
         def __init__(self, inputs):
             super().__init__(inputs)
+            # Assert that x and y are 1D arrays
             x = self.inputs[0]
             y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            assert Tensor.is_flat(x) and Tensor.is_flat(
+                y
+            ), f"x and y must be 1D arrays: {x.shape}, {y.shape}"
+            assert len(x) == len(
+                y
+            ), f"x and y must have the same length: {len(x)}, {len(y)}"
+            # Output has to be a scalar
+            output_tensor_type = Scalar
             output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
+            is_float = np.issubdtype(output_dtype, np.floating)
             self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
+                0.0 if is_float else 0,
                 requires_grad=self.inputs_requires_grad,
             )
 
@@ -393,16 +443,28 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output * y
                 if self.inputs[0].requires_grad:
-                    self.inputs[0].grad = Tensor.Add.add(
-                        self.inputs[0].grad,
-                        self.dot(self.inputs[1].get_value(), self.output.grad),
+                    # self.inputs[0].grad = self.inputs[0].grad + (
+                    #    self.inputs[1].get_value() * self.output.grad
+                    # )
+                    # Skip the mult by grad, since it is a scalar and it is 1 so will not change the value
+                    self.inputs[0].grad = (
+                        self.inputs[0].grad + self.inputs[1].get_value()
                     )
+                # ∂L/∂y = ∂L/∂output * x
                 if self.inputs[1].requires_grad:
-                    self.inputs[1].grad = Tensor.Add.add(
-                        self.inputs[1].grad,
-                        self.dot(self.inputs[0].get_value(), self.output.grad),
+                    # self.inputs[1].grad = self.inputs[1].grad + (
+                    #    self.inputs[0].get_value() * self.output.grad
+                    # )
+                    # Skip the mult by grad, since it is a scalar (incompat shape possibly in dot) and it is 1 so will not change the value
+                    self.inputs[1].grad = (
+                        self.inputs[1].grad + self.inputs[0].get_value()
                     )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
@@ -417,11 +479,21 @@ class Tensor:
                 x = x.get_value()
             if isinstance(y, Tensor):
                 y = y.get_value()
+            # Assert that x and y are 1D arrays
+            assert Tensor.is_flat(x) and Tensor.is_flat(
+                y
+            ), f"x and y must be 1D arrays: {x.shape}, {y.shape}"
+            # assert len(x) == len(
+            #    y
+            # ), f"x and y must have the same length: {len(x)}, {len(y)}"
             # Perform the dot product
             output = np.dot(x, y)
-            if not isinstance(output, np.ndarray):
+            if isinstance(output, np.ndarray):
                 # Must be a scalar
-                output = np.array([output])
+                output = output.item()
+            else:
+                # Assert that the output is a scalar
+                assert isinstance(output, np.number)
             debug_print("output:", output)
             return output
 
@@ -447,16 +519,22 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output * y
                 if self.inputs[0].requires_grad:
                     self.inputs[0].grad = Tensor.Add.add(
                         self.inputs[0].grad,
-                        self.inputs[1].get_value() * self.output.grad,
+                        Tensor.Mul.mul(self.inputs[1].get_value(), self.output.grad),
                     )
+                # ∂L/∂y = ∂L/∂output * x
                 if self.inputs[1].requires_grad:
                     self.inputs[1].grad = Tensor.Add.add(
                         self.inputs[1].grad,
-                        self.inputs[0].get_value() * self.output.grad,
+                        Tensor.Mul.mul(self.inputs[0].get_value(), self.output.grad),
                     )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
@@ -501,20 +579,20 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output @ (y^T) (where y^T is the transpose of y)
                 if self.inputs[0].requires_grad:
-                    self.inputs[0].grad = Tensor.Add.add(
-                        self.inputs[0].grad,
-                        Tensor.Matmul.matmul(
-                            self.output.grad, self.inputs[1].get_value().T
-                        ),
+                    self.inputs[0].grad = self.inputs[0].grad + (
+                        self.output.grad @ self.inputs[1].get_value().T
                     )
+                # ∂L/∂y = (x^T) @ ∂L/∂output (where x^T is the transpose of x)
                 if self.inputs[1].requires_grad:
-                    self.inputs[1].grad = Tensor.Add.add(
-                        self.inputs[1].grad,
-                        Tensor.Matmul.matmul(
-                            self.inputs[0].get_value().T, self.output.grad
-                        ),
+                    self.inputs[1].grad = self.inputs[1].grad + (
+                        self.inputs[0].get_value().T @ self.output.grad
                     )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
@@ -544,7 +622,7 @@ class Tensor:
             x = self.inputs[0]
             y = self.inputs[1]
             output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
+            output_dtype = Tensor.default_dtype
             output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
             self.output = output_tensor_type(
                 np.zeros(output_shape, dtype=output_dtype),
@@ -560,21 +638,25 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = (1/y) * ∂L/∂output
                 if self.inputs[0].requires_grad:
-                    self.inputs[0].grad = Tensor.Add.add(
-                        self.inputs[0].grad,
-                        Tensor.Div.div(self.output.grad, self.inputs[1].get_value()),
+                    self.inputs[0].grad = self.inputs[0].grad + (
+                        self.output.grad / self.inputs[1].get_value()
                     )
+                # ∂L/∂y = (-x / (y^2)) * ∂L/∂output
                 if self.inputs[1].requires_grad:
-                    self.inputs[1].grad = Tensor.Add.add(
-                        self.inputs[1].grad,
-                        Tensor.Div.div(
-                            self.inputs[0].get_value(), self.inputs[1].get_value()
+                    self.inputs[1].grad = (
+                        self.inputs[1].grad
+                        + (
+                            (self.inputs[0].get_value() * -1)
+                            / (self.inputs[1].get_value() ** 2)
                         )
-                        * -1
-                        * self.output.grad,
-                    )
+                    ) * self.output.grad
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
@@ -590,6 +672,49 @@ class Tensor:
                 y = y.get_value()
             # Perform the division
             output = x / y
+            if not isinstance(output, np.ndarray):
+                # Must be a scalar
+                output = np.array([output])
+            debug_print("output:", output)
+            return output
+
+    class IntDiv(Function):
+        def __init__(self, inputs):
+            super().__init__(inputs)
+            # Set the gradient function
+            x = self.inputs[0]
+            y = self.inputs[1]
+            output_tensor_type = Tensor.get_output_tensor_type(x, y)
+            output_dtype = Tensor.get_output_data_type(x, y)
+            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
+            self.output = output_tensor_type(
+                np.zeros(output_shape, dtype=output_dtype),
+                requires_grad=self.inputs_requires_grad,
+            )
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        def _forward(self):
+            self.output.value = Tensor.IntDiv.intdiv(
+                self.inputs[0].get_value(), self.inputs[1].get_value()
+            )
+
+        # Should not be called directly, prefer to use the __call__ method directly or indirectly
+        # Should only be called with auto_grad=True
+        def _backward(self):
+            raise Exception("IntDiv backward not implemented")
+
+        @staticmethod
+        def intdiv(
+            x: Union["Tensor", np.ndarray], y: Union["Tensor", np.ndarray]
+        ) -> np.ndarray:
+            debug_print("intdiv x:", x)
+            debug_print("intdiv y:", y)
+            if isinstance(x, Tensor):
+                x = x.get_value()
+            if isinstance(y, Tensor):
+                y = y.get_value()
+            # Perform the division
+            output = x // y
             if not isinstance(output, np.ndarray):
                 # Must be a scalar
                 output = np.array([output])
@@ -615,9 +740,16 @@ class Tensor:
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         # Should only be called with auto_grad=True
         def _backward(self):
-            if Tensor.auto_grad:
+            if Tensor.get_auto_grad() and self.inputs_requires_grad:
+                # ∂L/∂output = 1
+                self.output.grad = np.ones_like(
+                    self.output.grad, dtype=Tensor.default_dtype
+                )
+                # ∂L/∂x = ∂L/∂output * -1
                 if self.inputs[0].requires_grad:
-                    self.inputs[0].grad = Tensor.Neg.neg(self.output.grad)
+                    self.inputs[0].grad = Tensor.Add.add(
+                        self.inputs[0].grad, Tensor.Neg.neg(self.output.grad)
+                    )
             else:
                 raise Exception("Backward should only be called with auto_grad=True")
 
@@ -672,6 +804,20 @@ class Tensor:
             other = Tensor(other)
         return other / self
 
+    def __floordiv__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+        return Tensor.IntDiv([self, other])()
+
+    def __rfloordiv__(
+        self, other: Union[TensorLikeForward, ScalarLikeForward]
+    ) -> "Tensor":
+        if not isinstance(other, Tensor):
+            other = Tensor(other)
+        return other // self
+
     def __matmul__(
         self, other: Union[TensorLikeForward, ScalarLikeForward]
     ) -> "Tensor":
@@ -696,10 +842,12 @@ class Scalar(Tensor):
     class InvalidScalarOperation(Exception):
         # Takes the function name and exception is "Cannot __func__ a scalar"
         def __init__(self, func_name: str):
-            super().__init__(f"Cannot {func_name} a scalar")
+            super().__init__(f"Cannot perform {func_name} on a scalar")
 
     def __init__(self, value: ScalarLikeForward, requires_grad: bool = False):
-        super().__init__(value=value, shape=(1,), requires_grad=requires_grad)
+        # Assert that the value is a scalar
+        assert isinstance(value, ScalarLikeForward), "Value must be a scalar"
+        super().__init__(value=value, shape=(), requires_grad=requires_grad)
 
         # Undefine any operations that would reshape the tensor to become non-scalar
         methods_to_undefine = [

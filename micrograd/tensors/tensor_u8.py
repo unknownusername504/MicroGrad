@@ -20,14 +20,18 @@ class TensorU8(Tensor):
             value = np.zeros(shape, dtype=TensorU8.default_dtype)
         else:
             if not isinstance(value, np.ndarray):
-                if type(value) in [int, float, np.number]:
+                if (
+                    isinstance(value, int)
+                    or isinstance(value, float)
+                    or isinstance(value, np.number)
+                ):
                     value = np.array([value], dtype=TensorU8.default_dtype)
-                elif type(value) is List:
+                elif isinstance(value, list) or isinstance(value, List):
                     value = np.array(value, dtype=TensorU8.default_dtype)
                 elif isinstance(value, Tensor):
                     value = value.value
                 else:
-                    raise Exception("Invalid value type")
+                    raise Exception(f"Invalid value type: {type(value)}")
         if shape is None:
             shape = value.shape
         if value.shape != shape:

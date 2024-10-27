@@ -18,8 +18,8 @@ class WaveProcessOutputNone:
 # Class with wave process structure
 class WaveProcessJob:
     # Class with wave process job
-    def __init__(self, func):
-        self.func = func
+    def __init__(self, function):
+        self.function = function
 
 
 class CoreThreadAffinityManager:
@@ -132,29 +132,30 @@ class WaveProcessWorker(multiprocessing.Process):
 
     @staticmethod
     def worker_thread(
-        func: Function, core_thread_id, result_queue: multiprocessing.Queue
+        function: Function, core_thread_id, result_queue: multiprocessing.Queue
     ):
         try:
             CoreThreadAffinityManager.set_thread_affinity(core_thread_id)
             debug_print("\nCalling function...", flush=True)
-            debug_print("func x:", func.inputs[0], flush=True)
-            debug_print("func y:", func.inputs[1], flush=True)
+            debug_print("function x:", function.inputs[0], flush=True)
+            debug_print("function y:", function.inputs[1], flush=True)
             # Call the function
-            result = func()
-            debug_print("func result:", result, flush=True)
+            result = function()
+            # Print the process id and the output result grads
+            debug_print("function result:", result, flush=True)
             debug_print("Called function...\n", flush=True)
         except Exception as e:
             result = e
         result_queue.put(result)
 
-    def create_process(self, func: Function):
+    def create_process(self, function: Function):
         debug_print("Creating process...")
 
         try:
             # Set the core affinity every two threads
             debug_print("Spawning threads...")
             locked_core_thread_id = []
-            debug_print("func:", func)
+            debug_print("function:", function)
             # Schedule the job to the wave process worker
             locked_core_thread_id = (
                 self.core_thread_affinity_manager.lock_core_thread_affinity()
@@ -162,7 +163,7 @@ class WaveProcessWorker(multiprocessing.Process):
             result_queue = multiprocessing.Queue()
             process = multiprocessing.Process(
                 target=WaveProcessWorker.worker_thread,
-                args=(func, locked_core_thread_id, result_queue),
+                args=(function, locked_core_thread_id, result_queue),
             )
             process.start()
         finally:
@@ -197,15 +198,15 @@ class WaveProcessWorker(multiprocessing.Process):
     def process(self, input):
         try:
             # Process the operation on the wave process worker
-            debug_print("func:", input.func)
+            debug_print("function:", input.function)
             # Reserve a thread
             with self.num_threads_unreserved.get_lock():
                 self.num_threads_unreserved.value -= 1
-            output = self.wave_process(input.func)
+            output = self.wave_process(input.function)
             # Check if the output is exception
             if isinstance(output, Exception):
                 raise output
-            input.func.output = output
+            input.function.output = output
         except Exception as e:
             debug_print("Exception occurred during wave process:", e)
             output = e
@@ -241,9 +242,9 @@ class WaveProcess:
         if self.worker is not None:
             self.worker.terminate()
 
-    def schedule(self, func):
+    def schedule(self, function):
         # Schedule the job to the wave process worker
-        self.worker.enqueue(WaveProcessJob(func))
+        self.worker.enqueue(WaveProcessJob(function))
 
     def get_result(self, timeout=10):
         # Get the result from the wave process worker
@@ -293,7 +294,8 @@ class WaveRunner:
         with self.active_runners.get_lock():
             if self.active_runners.value == 0:
                 return Exception("Wave process is not running")
-        # Schedule the function to the wave process
-        self.wave_process.schedule(function)
-        # Get the result from the wave process
-        return self.wave_process.get_result(timeout=2)
+        with Function.with_sharing(function):
+            # Schedule the function to the wave process
+            self.wave_process.schedule(function)
+            # Get the result from the wave process
+            return self.wave_process.get_result(timeout=2)
