@@ -306,14 +306,15 @@ class CartPole:
     def step(self, action):
         if self.done:
             return
-        observation, self.reward, terminated, truncated, _ = self.env.step(action)
+        observation, reward, terminated, truncated, _ = self.env.step(action)
+        self.reward = Tensor(np.array([reward]))
         # Update the running reward
         per_run_weight = 0.1
         self.running_steps_achieved = (per_run_weight * self.env._elapsed_steps) + (
             (1 - per_run_weight) * self.running_steps_achieved
         )
         # Update the history with the current action and reward
-        self.history.append(np.concatenate([observation, [action, self.reward]]))
+        self.history.append(np.concatenate([observation, [action, reward]]))
         self.state = Tensor(np.stack([h for h in self.history]))
         self.model_input = self.state
         debug_print(f"Terminated: {terminated}, Truncated: {truncated}")
@@ -331,7 +332,7 @@ class CartPole:
         self.step(action)
         # Turn off autograd for the loss calculation
         with Tensor.with_auto_grad(False):
-            _ = self.model.loss(self.model_output, Tensor(self.reward))
+            _ = self.model.loss(self.model_output, self.reward)
         self.optimizer.step()
 
     def update_model_from_buffer(self, buffer, batch_size):

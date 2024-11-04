@@ -4,25 +4,25 @@ from micrograd.tensors.tensor import Function, Tensor
 
 
 class Softmax(Function):
-    def __init__(self, input):
-        super().__init__([input])
+    def __init__(self, input, axis=None):
+        super().__init__(inputs=[input], function=type(self).__name__)
+        self.axis = axis if axis is not None else (0 if (self.input.ndim == 1) else 1)
 
     def softmax(self, x):
-        exp = np.exp(x - np.max(x))
-        axis = 0 if x.ndim == 1 else 1
-        return exp / np.sum(exp, axis=axis, keepdims=True)
+        exp = np.exp(x.astype(self.output.value.dtype) - np.max(x))
+        return exp / np.sum(exp, axis=self.axis, keepdims=True)
 
     def _forward(self):
-        self.output = Tensor(
-            self.softmax(self.input.value), requires_grad=self.input.requires_grad
-        )
+        self.output.value = self.softmax(self.input.value)
 
     def softmax_grad(self, y, dy):
-        axis = 0 if y.ndim == 1 else 1
-        return y * (dy - np.sum(y * dy, axis=axis, keepdims=True))
+        return y * (dy - np.sum(y * dy, axis=self.axis, keepdims=True))
 
     def _backward(self):
-        if self.input.requires_grad:
-            self.input.grad = self.input.grad + self.softmax_grad(
+        if Tensor.get_auto_grad() and self.inputs_requires_grad:
+            self.output.grad = np.ones_like(
+                self.output.grad, dtype=Tensor.default_dtype
+            )
+            self.input.grad += self.output.grad * self.softmax_grad(
                 self.output.value, self.output.grad
             )

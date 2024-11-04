@@ -3,10 +3,10 @@ import numpy as np
 from micrograd.tensors.tensor import Tensor
 
 
-# Class that implements a tensor of unsigned 8-bit integers
+# Class that implements a tensor of signed 8-bit integers
 # All operations are quantized and performed on the CPU
-class TensorU8(Tensor):
-    default_dtype: ClassVar[np.dtype] = np.uint8
+class TensorI8(Tensor):
+    default_dtype: ClassVar[np.dtype] = np.int8
 
     # TODO: Implement type bounds checking
     def __init__(
@@ -17,7 +17,7 @@ class TensorU8(Tensor):
     ):
         if value is None:
             assert shape is not None
-            value = np.empty(shape=shape, dtype=TensorU8.default_dtype)
+            value = np.empty(shape=shape, dtype=TensorI8.default_dtype)
         else:
             if not isinstance(value, np.ndarray):
                 if (
@@ -25,17 +25,17 @@ class TensorU8(Tensor):
                     or isinstance(value, float)
                     or isinstance(value, np.number)
                 ):
-                    value = np.array([value], dtype=TensorU8.default_dtype)
+                    value = np.array([value], dtype=TensorI8.default_dtype)
                 elif isinstance(value, list) or isinstance(value, List):
-                    value = np.array(value, dtype=TensorU8.default_dtype)
+                    value = np.array(value, dtype=TensorI8.default_dtype)
                 elif isinstance(value, Tensor):
-                    value = value.value.astype(TensorU8.default_dtype)
+                    value = value.value.astype(TensorI8.default_dtype)
                 else:
                     raise Exception(f"Invalid value type: {type(value)}")
         if shape is None:
             shape = value.shape
         if value.shape != shape:
             raise Exception("Value shape does not match tensor shape")
-        if value.dtype != TensorU8.default_dtype:
-            value = value.astype(TensorU8.default_dtype)
+        if value.dtype != TensorI8.default_dtype:
+            value = value.astype(TensorI8.default_dtype)
         super().__init__(value=value, shape=shape, requires_grad=requires_grad)

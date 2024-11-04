@@ -37,7 +37,85 @@ def run_op_unittests():
     runner.run(suite)
 
 
+def run_act_unittests():
+    # Create the test suite
+    suite = unittest.TestSuite()
+
+    # Join the current working directory with the unittests folder
+    unittests_dir = os.path.join(os.getcwd(), "micrograd", "unittests")
+    print(f"Running unittests from {unittests_dir}")
+
+    # Find all the test cases in this folder
+    test_loader = unittest.TestLoader()
+    test_loader.testMethodPrefix = "act_unittest_"
+    tests = test_loader.discover(unittests_dir, pattern="act_unittests.py")
+
+    # Print the tests
+    print("Found the following tests:")
+    # Print the tests
+    for test_group in tests:
+        for test in test_group:
+            print(f"Test case: {test}")
+            if isinstance(test, unittest.loader._FailedTest):
+                print("Failed to load test methods")
+                print(test)
+                return
+            else:
+                for t in test:
+                    print(f"Test method: {t}")
+
+    # Add the tests to the suite
+    suite.addTests(tests)
+
+    # Run the tests
+    runner = unittest.TextTestRunner()
+    runner.run(suite)
+
+
+def run_loss_unittests():
+    # Create the test suite
+    suite = unittest.TestSuite()
+
+    # Join the current working directory with the unittests folder
+    unittests_dir = os.path.join(os.getcwd(), "micrograd", "unittests")
+    print(f"Running unittests from {unittests_dir}")
+
+    # Find all the test cases in this folder
+    test_loader = unittest.TestLoader()
+    test_loader.testMethodPrefix = "loss_unittest_"
+    tests = test_loader.discover(unittests_dir, pattern="loss_unittests.py")
+
+    # Print the tests
+    print("Found the following tests:")
+    # Print the tests
+    for test_group in tests:
+        for test in test_group:
+            print(f"Test case: {test}")
+            if isinstance(test, unittest.loader._FailedTest):
+                print("Failed to load test methods")
+                print(test)
+                return
+            else:
+                for t in test:
+                    print(f"Test method: {t}")
+
+    # Add the tests to the suite
+    suite.addTests(tests)
+
+    # Run the tests
+    runner = unittest.TextTestRunner()
+    runner.run(suite)
+
+
 if __name__ == "__main__":
-    print("Running all unittests...")
+    print("Running all op unittests...")
     run_op_unittests()
+    print("Done.")
+
+    print("Running all act unittests...")
+    run_act_unittests()
+    print("Done.")
+
+    print("Running all loss unittests...")
+    run_loss_unittests()
     print("Done.")

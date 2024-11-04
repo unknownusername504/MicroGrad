@@ -9,12 +9,33 @@ TensorLikeForward = Union[np.ndarray, List[ScalarLikeForward], "Tensor"]
 
 
 class Function:
-    def __init__(self, inputs: List["Tensor"]):
+    def __init__(self, inputs: List["Tensor"], function: str):
         if len(inputs) == 0:
             raise Exception("No inputs provided")
         self.inputs = inputs
-        self.output = None
+        if len(inputs) == 1:
+            self.input = inputs[0]
         self.inputs_requires_grad = any([input.requires_grad for input in inputs])
+
+        if function != None:
+            x = self.inputs[0]
+            y = self.inputs[1] if len(self.inputs) > 1 else None
+            output_tensor_type = Tensor.get_output_tensor_type(x, y, function=function)
+            output_dtype = Tensor.get_output_data_type(x, y, function=function)
+            output_shape = Tensor.get_output_shape(x, y, function=function)
+            if output_tensor_type == Scalar:
+                is_float = np.issubdtype(output_dtype, np.floating)
+                self.output = output_tensor_type(
+                    0.0 if is_float else 0,
+                    requires_grad=self.inputs_requires_grad,
+                )
+            else:
+                self.output = output_tensor_type(
+                    np.empty(shape=output_shape, dtype=output_dtype),
+                    requires_grad=self.inputs_requires_grad,
+                )
+        else:
+            self.output = None
 
     def _forward(self):
         raise NotImplementedError
@@ -93,7 +114,7 @@ class Tensor:
             self.zero_grad()
 
     def _create_tensor(self, shape):
-        self.value = np.zeros(shape, dtype=Tensor.default_dtype)
+        self.value = np.empty(shape=shape, dtype=Tensor.default_dtype)
 
     def zero_grad(self):
         if self.requires_grad:
@@ -104,6 +125,14 @@ class Tensor:
         if len(self.value.shape) == 0:
             return 1
         return len(self.value)
+
+    # Size of the tensor
+    def get_size(self):
+        return self.value.size
+
+    @property
+    def size(self):
+        return self.get_size()
 
     # Maximum value of the tensor
     def max(self):
@@ -121,6 +150,31 @@ class Tensor:
 
     def item(self):
         return self.value.item()
+
+    def reduce(self, axis=None, keepdims=False, reduction="mean"):
+        if reduction not in ["mean", "sum"]:
+            raise ValueError(
+                f"Invalid reduction type: {reduction}. Supported: 'mean', 'sum'."
+            )
+
+        # Apply reduction to the tensor value
+        if reduction == "mean":
+            self.value = np.mean(self.value, axis=axis, keepdims=keepdims).astype(
+                self.value.dtype
+            )
+            if self.requires_grad:
+                # For mean reduction, scale gradients by the size of the reduced axis to keep gradients aligned
+                grad_scale = np.prod(self.value.shape) / np.prod(self.grad.shape)
+                self.grad = (
+                    np.mean(self.grad, axis=axis, keepdims=keepdims) * grad_scale
+                )
+        elif reduction == "sum":
+            self.value = np.sum(self.value, axis=axis, keepdims=keepdims).astype(
+                self.value.dtype
+            )
+            if self.requires_grad:
+                # Sum reduction directly adds the gradients across the reduced axis
+                self.grad = np.sum(self.grad, axis=axis, keepdims=keepdims)
 
     # Function to test if the tensor is equal to another tensor
     # Only checks the value
@@ -158,6 +212,13 @@ class Tensor:
     @property
     def shape(self):
         return self.get_shape()
+
+    def get_ndim(self):
+        return self.value.ndim
+
+    @property
+    def ndim(self):
+        return self.get_ndim()
 
     # Get the dtype of the tensor
     def get_dtype(self):
@@ -247,19 +308,51 @@ class Tensor:
 
     @staticmethod
     def get_output_shape(x: "Tensor", y: "Tensor", function: str) -> Tuple[int]:
+        if y is None:
+            return x.shape
+        elif x is None:
+            return y.shape
         if function == "Matmul":
             return Tensor.calculate_matmul_shape(x.shape, y.shape)
         elif function == "Dot":
+            # Assert that x and y are 1D arrays
+            assert Tensor.is_flat(x) and Tensor.is_flat(
+                y
+            ), f"x and y must be 1D arrays: {x.shape}, {y.shape}"
+            assert len(x) == len(
+                y
+            ), f"x and y must have the same length: {len(x)}, {len(y)}"
             return ()
+        elif function == "MeanSquaredError":
+            assert (
+                x.shape == y.shape
+            ), f"Incompatible shapes for MSE: {x.shape}, {y.shape}"
+            return ()
+        elif function == "NegativeLogLikelihood":
+            assert Tensor.is_flat(y), f"y must be 1D array: {y.shape}"
+            return y.shape
         else:
             return Tensor.broadcast_shapes(x.shape, y.shape)
 
     @staticmethod
-    def get_output_data_type(x: "Tensor", y: "Tensor") -> np.dtype:
+    def get_output_data_type(x: "Tensor", y: "Tensor", function: str) -> np.dtype:
         # We want to determine the output type based on the input types
         # If the tensor types are not the same then take the higher type
         # List of known data types in order of precedence
         # Get all numpy datatypes
+        if function in [
+            "Div",
+            "Sigmoid",
+            "Softmax",
+            "MeanSquaredError",
+            "NegativeLogLikelihood",
+        ]:
+            # Any fuctions that require division should return a float
+            return Tensor.default_dtype
+        elif y is None:
+            return x.dtype
+        elif x is None:
+            return y.dtype
         known_data_types = np.sctypes["float"] + np.sctypes["int"] + np.sctypes["uint"]
         data_type_1 = x.dtype
         data_type_2 = y.dtype
@@ -271,10 +364,19 @@ class Tensor:
         raise Exception("Unknown data type")
 
     @staticmethod
-    def get_output_tensor_type(x: "Tensor", y: "Tensor") -> type:
+    def get_output_tensor_type(x: "Tensor", y: "Tensor", function: str) -> type:
         # We want to determine the output type based on the input types
         # If the tensor types are not the same then take the higher type
         # List of known data types in order of precedence
+        if function in ["Dot", "MeanSquaredError"]:
+            return Scalar
+        elif function in ["Div", "Sigmoid", "Softmax"]:
+            # Any fuctions that require division should return a float
+            return Tensor
+        elif y is None:
+            return type(x)
+        elif x is None:
+            return type(y)
         known_data_types = np.sctypes["float"] + np.sctypes["int"] + np.sctypes["uint"]
         data_type_1 = x.dtype
         data_type_2 = y.dtype
@@ -299,16 +401,7 @@ class Tensor:
 
     class Add(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -357,16 +450,7 @@ class Tensor:
 
     class Sub(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -415,24 +499,7 @@ class Tensor:
 
     class Dot(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            # Assert that x and y are 1D arrays
-            x = self.inputs[0]
-            y = self.inputs[1]
-            assert Tensor.is_flat(x) and Tensor.is_flat(
-                y
-            ), f"x and y must be 1D arrays: {x.shape}, {y.shape}"
-            assert len(x) == len(
-                y
-            ), f"x and y must have the same length: {len(x)}, {len(y)}"
-            # Output has to be a scalar
-            output_tensor_type = Scalar
-            output_dtype = Tensor.get_output_data_type(x, y)
-            is_float = np.issubdtype(output_dtype, np.floating)
-            self.output = output_tensor_type(
-                0.0 if is_float else 0,
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -499,16 +566,7 @@ class Tensor:
 
     class Mul(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -559,16 +617,7 @@ class Tensor:
 
     class Matmul(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -617,17 +666,7 @@ class Tensor:
 
     class Div(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            # Set the gradient function
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.default_dtype
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -680,17 +719,7 @@ class Tensor:
 
     class IntDiv(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            # Set the gradient function
-            x = self.inputs[0]
-            y = self.inputs[1]
-            output_tensor_type = Tensor.get_output_tensor_type(x, y)
-            output_dtype = Tensor.get_output_data_type(x, y)
-            output_shape = Tensor.get_output_shape(x, y, function=type(self).__name__)
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
@@ -723,15 +752,7 @@ class Tensor:
 
     class Neg(Function):
         def __init__(self, inputs):
-            super().__init__(inputs)
-            x = self.inputs[0]
-            output_tensor_type = type(x)
-            output_dtype = output_tensor_type.default_dtype
-            output_shape = x.shape
-            self.output = output_tensor_type(
-                np.zeros(output_shape, dtype=output_dtype),
-                requires_grad=self.inputs_requires_grad,
-            )
+            super().__init__(inputs=inputs, function=type(self).__name__)
 
         # Should not be called directly, prefer to use the __call__ method directly or indirectly
         def _forward(self):
