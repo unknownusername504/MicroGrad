@@ -138,6 +138,9 @@ class Tensor:
     def max(self):
         return self.value.max()
 
+    def argmax(self, axis=None):
+        return self.value.argmax(axis=axis)
+
     # Casting the tensor dytpe
     def astype(self, dtype):
         self.value = self.value.astype(dtype)
@@ -166,15 +169,21 @@ class Tensor:
                 # For mean reduction, scale gradients by the size of the reduced axis to keep gradients aligned
                 grad_scale = np.prod(self.value.shape) / np.prod(self.grad.shape)
                 self.grad = (
-                    np.mean(self.grad, axis=axis, keepdims=keepdims) * grad_scale
+                    np.ones_like(
+                        self.value,
+                        dtype=self.grad.dtype,
+                    )
+                    * grad_scale
                 )
         elif reduction == "sum":
             self.value = np.sum(self.value, axis=axis, keepdims=keepdims).astype(
                 self.value.dtype
             )
             if self.requires_grad:
-                # Sum reduction directly adds the gradients across the reduced axis
-                self.grad = np.sum(self.grad, axis=axis, keepdims=keepdims)
+                self.grad = np.ones_like(
+                    self.value,
+                    dtype=self.grad.dtype,
+                )
 
     # Function to test if the tensor is equal to another tensor
     # Only checks the value
@@ -843,7 +852,7 @@ class Tensor:
         self, other: Union[TensorLikeForward, ScalarLikeForward]
     ) -> "Tensor":
         # Perform the dot product for vectors and matrix multiplication for matrices
-        if len(self.shape) == 1 and len(other.shape) == 1:
+        if Tensor.is_flat(self) and Tensor.is_flat(other):
             return Tensor.Dot([self, other])()
         else:
             return Tensor.Matmul([self, other])()

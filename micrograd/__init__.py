@@ -16,6 +16,7 @@ from micrograd.functions.activations.relu import *
 from micrograd.functions.activations.sigmoid import *
 from micrograd.functions.activations.softmax import *
 from micrograd.functions.loss.actor_critic import *
+from micrograd.functions.loss.binary_cross_entropy import *
 from micrograd.functions.loss.cross_entropy import *
 from micrograd.functions.loss.mean_squared_error import *
 from micrograd.functions.loss.negative_log_likelihood import *

@@ -19,7 +19,8 @@ class ActorCritic(Function):
                 action,
                 reward,
                 advantage,
-            ]
+            ],
+            function=type(self).__name__,
         )
 
     def compute_actor_loss(self, action_probs, action):

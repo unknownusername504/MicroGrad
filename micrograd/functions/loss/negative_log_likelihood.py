@@ -25,9 +25,6 @@ class NegativeLogLikelihood(Function):
         )
         for i in range(action_probs.shape[0]):
             grad[i, action[i]] -= 1
-            if self.reduction == "mean":
-                # Since the loss is averaged, we need to divide by the size
-                grad[i] /= action_probs.shape[0]
         # Ensure dy is a 1D array with shape (N,)
         if np.isscalar(dy):
             dy = np.array([dy], dtype=Tensor.default_dtype)
@@ -44,15 +41,15 @@ class NegativeLogLikelihood(Function):
         self.output.value = self.negative_log_likelihood(
             self.inputs[0].value, self.inputs[1].value
         )
-        # I am not sure why reduce isn't on the backward pass to apply a scalar value to the output gradient
-        self._reduce()
 
     def _backward(self):
         if Tensor.get_auto_grad() and self.inputs_requires_grad:
+            # Intermediate gradient for the output for reduction
             self.output.grad = np.ones_like(
                 self.output.value,
                 dtype=Tensor.default_dtype,  # Initialize gradient for output value
             )
+            self._reduce()
             if self.inputs[0].requires_grad:
                 self.inputs[0].grad += self.negative_log_likelihood_grad(
                     self.inputs[0].value, self.inputs[1].value, self.output.grad
@@ -61,3 +58,11 @@ class NegativeLogLikelihood(Function):
                 raise NotImplementedError(
                     "Backward pass for the action is not implemented"
                 )
+
+            # Final gradients are 1s wrt the input
+            self.output.grad = np.ones_like(
+                self.output.value,
+                dtype=Tensor.default_dtype,
+            )
+        else:
+            self._reduce()

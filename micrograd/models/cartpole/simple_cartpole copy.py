@@ -10,7 +10,6 @@ import cv2
 import imageio
 from tqdm import tqdm
 
-from micrograd.functions.loss.actor_critic import MeanSquaredError
 from micrograd.utils.debug_utils import debug_print
 
 from micrograd.tensors.tensor import Tensor, Scalar
@@ -20,9 +19,16 @@ from micrograd.functions.activations.relu import ReLU
 from micrograd.functions.activations.sigmoid import Sigmoid
 from micrograd.functions.activations.softmax import Softmax
 
+from micrograd.functions.loss.actor_critic import ActorCritic
+
 from micrograd.layers.linear import Linear
-from micrograd.layers.lstm import LSTM
 from micrograd.layers.reshape import Reshape
+
+"""
+envs = gym.envs.registry
+env_ids = envs.keys()
+print(env_ids)
+"""
 
 
 class ReplayBuffer:
@@ -106,8 +112,8 @@ class CartPole:
                 x = layer(x)
             return x
 
-        def loss(self, y_true, y_pred):
-            return MeanSquaredError(y_true, y_pred)()
+        def loss(self, action_probs, action, reward, advantage):
+            return ActorCritic(action_probs, action, reward, advantage)()
 
         def get_parameters(self):
             return self.parameters
@@ -147,7 +153,7 @@ class CartPole:
             return action
 
     class AdaptiveSoftmaxPolicy:
-        def __init__(self, epsilon=0.2, epsilon_decay=0.99, performance_threshold=0.0):
+        def __init__(self, epsilon=0.5, epsilon_decay=0.99, performance_threshold=0.5):
             self.epsilon = epsilon
             self.epsilon_decay = epsilon_decay
             self.performance_threshold = performance_threshold
@@ -166,7 +172,7 @@ class CartPole:
                 self.epsilon = 0.01
             else:
                 # Adjust epsilon based on performance
-                if performance > (self.performance_threshold * 0.9):
+                if performance > self.performance_threshold:
                     self.epsilon *= self.epsilon_decay
                 else:
                     self.epsilon /= self.epsilon_decay
@@ -221,8 +227,9 @@ class CartPole:
                 self.num_observations + 2
             ),  # History of observation, action, and reward as well as the current observation
             "target_steps": 100,
-            "model_dense_dim1": 64,
-            "model_dense_dim2": 16,
+            "model_dense_dim1": 256,
+            "model_dense_dim2": 128,
+            "model_dense_dim3": 64,
             "optimizer_lr": 1e-3,
         }
 
@@ -237,6 +244,7 @@ class CartPole:
             [
                 self.hyperparameters["model_dense_dim1"],
                 self.hyperparameters["model_dense_dim2"],
+                self.hyperparameters["model_dense_dim3"],
             ],
             model_output_dim,
             self.env.action_space,
@@ -321,11 +329,14 @@ class CartPole:
     def update_model(self, action):
         self.optimizer.zero_grad()
         self.step(action)
-        # Turn off autograd for the loss calculation
-        # with Tensor.with_auto_grad(False):
-        #    _ = self.model.loss(self.model_output, self.reward)
-        target = Scalar(1.0)
-        _ = self.model.loss(target, self.reward)
+        advantage = Scalar((self.reward - self.model_output[action]).item())
+        action_probs = Softmax(self.model_output)().expand_dims(axis=0)
+        _ = self.model.loss(
+            action_probs,
+            Tensor(np.array([action], dtype=np.dtype("long"))),
+            self.reward,
+            advantage,
+        )
         self.optimizer.step()
 
     def update_model_from_buffer(self, buffer, batch_size):
